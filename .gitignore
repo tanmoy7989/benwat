@@ -1,0 +1,10 @@
+*pyc
+*.so
+*~
+*.txt
+*.gro
+*.mdp
+*.tpr
+*.trr
+*.edr
+*.xyz
