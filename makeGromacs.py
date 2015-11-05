@@ -3,7 +3,7 @@ import os, sys
 import numpy as np
 
 
-DelTempFiles = True
+DelTempFiles = False
 NB = 10
 NW = 500
 TempSet = 300
@@ -12,7 +12,6 @@ TempSet = 300
 CALCSTEPS = 5
 MINSTEPS = 1000
 NPTSTEPS = 1000
-NVTSTEPS = 1000
 PRODSTEPS = 1000
 STEPFREQ = 100
 RESTARTFREQ = 100
@@ -190,7 +189,7 @@ end structure
 
 # common params (Christine Peter)
 common_params = '''
-; neighbor searching
+;neighbor searching
 nstcalclr = %(calcsteps)d
 nstlist = %(calcsteps)d
 nstcomm = %(calcsteps)d
@@ -201,7 +200,7 @@ verlet-buffer-drift  = 0
 rlist = 1
 rlistlong = 1.4
 
-; electrostatics
+;electrostatics
 coulombtype = PME
 coulomb-modifier = None
 rcoulomb-switch = 0
@@ -209,7 +208,7 @@ rcoulomb = 1.0
 epsilon-r = 1
 epsilon-rf = 1
 
-; ewald summation
+;ewald summation
 fourierspacing = 0
 fourier-nx = 54
 fourier-ny = 54
@@ -219,26 +218,27 @@ ewald-rtol  = 1e-05
 ewald-geometry = 3d
 optimize-fft = yes
 
-; van der Waals
+;van der Waals
 vdwtype = Cut-off
 vdw-modifier = None
 rvdw-switch = 0
 rvdw = 1.4
 
-; constraints
+;constraints
+constraints = all-bonds
 constraint-algorithm = LINCS
 shake-tol = 0.0001
 lincs-order = 4
 lincs-iter = 1
 lincs-warnangle = 30
 
-; box 
+;box 
 pbc = xyz
 
 ; time-stepping
 dt = 0.002
 
-; output frequency settings
+;output frequency settings
 nstcalcenergy = %(calcsteps)d
 nstenergy = %(stepfreq)d
 nstlog = %(stepfreq)d
@@ -257,26 +257,6 @@ nstcgsteep = 1000
 nsteps = %(minsteps)d
 '''
 
-# nvt equlibration
-nvt_mdp = '''
-integrator = md
-nsteps %(nvtsteps)d
-
-nsttcouple = %(calcsteps)d
-tcoupl = v-rescale
-tc-grps = Protein Non-Protein
-tau-t = 0.1 0.1
-ref-t = %(TempSet)d %(TempSet)d
-
-pcoupl = no
-DispCorr = no
-
-continuation = no
-gen_vel = yes
-gen_temp = %(TempSet)g
-gen_seed = -1
-'''
-
 # npt equlibration
 npt_mdp = '''
 ;define = -DPOSRES
@@ -284,23 +264,28 @@ npt_mdp = '''
 integrator = md
 nsteps %(nptsteps)d
 
-nsttcouple = %(calcsteps)d
-tcoupl = v-rescale
+;temp-coupling params (nose-hoover used in Nico's paper)
+nsttcouple = -1
+tcoupl = berendsen
 tc-grps = Protein Non-Protein
 tau-t = 0.1 0.1
-ref-t = %(TempSet)d %(TempSet)d
+ref-t = %(TempSet)g %(TempSet)g
 
+;press-coupling params (Parrinello-Rahman used in Nico's paper)
 nstpcouple = -1
-pcoupl = Parrinello-Rahman
+pcoupl = berendsen
 pcoupltype = isotropic
 tau-p = 1.0 1.0
-ref-p = 0.0 0.0
+ref-p = 1.0 1.0
 compressibility = 4.5e-5
 refcoord_scaling = no
-DispCorr = no
+DispCorr = EnerPres
 
-continuation = yes
-gen_vel = no
+;startup 
+continuation = no
+gen_vel = yes
+gen_temp = %(TempSet)g 
+gen_seed = -1
 '''
 
 # production
@@ -308,20 +293,13 @@ prod_mdp = '''
 integrator = md
 nsteps %(prodsteps)d
 
-nsttcouple = %(calcsteps)d
-tcoupl = v-rescale
-tc-grps = Protein Non-Protein
+nsttcouple = -1
+tcoupl = nose-hoover
+tc-grps = Protein SOL
 tau-t = 0.1 0.1
-ref-t = %(TempSet)d %(TempSet)d
+ref-t = %(TempSet)g %(TempSet)g
 
-nstpcouple = -1
-pcoupl = Parrinello-Rahman
-pcoupltype = isotropic
-tau-p = 1.0 1.0
-ref-p = 0.0 0.0
-compressibility = 4.5e-5
-refcoord_scaling = no
-DispCorr = no
+pcoupl = no
 
 continuation = yes
 gen_vel = no
@@ -338,21 +316,22 @@ def getBoxL():
     v = (18./N_A) * (1e-2 * 1e9)**3.
     BoxVol = v * NW
     BoxL = BoxVol ** (1./3.)
-    return BoxL
+    pad = 0.4 #nm
+    return BoxL + pad
 
 def genData(BoxL = 3., Prefix = 'benwat'):
-    BoxL *= 10.
+    BoxL_packmol = BoxL * 10.
     file('benzene.gro', 'w').write(benzene_gro)
     file('water.gro', 'w').write(water_gro)
-    file('solvate.inp', 'w').write(packmol_script % {'Prefix': Prefix, 'NB': NB, 'NW': NW, 'Len': BoxL/2.})
+    file('solvate.inp', 'w').write(packmol_script % {'Prefix': Prefix, 'NB': NB, 'NW': NW, 'Len': BoxL_packmol/2.})
     file('%s.top' % Prefix, 'w'). write(topology % {'NB': NB, 'NW': NW})
     
     cmdstring = '''
 editconf -f benzene.gro -o benzene.pdb
 editconf -f water.gro -o water.pdb
 packmol < solvate.inp
-editconf -f %s.pdb -o %s.gro -d 1.0 -bt cubic
-''' % (Prefix, Prefix)
+editconf -f %s.pdb -o %s.gro -bt cubic -box %f %f %f
+''' % (Prefix, Prefix, BoxL, BoxL, BoxL)
 
     os.system(cmdstring)
     if DelTempFiles:
@@ -365,7 +344,7 @@ def doEneMin(Prefix = 'benwat'):
     file('%s_minim.mdp' % Prefix, 'w').write(s)
     cmdstring = '''
 grompp -f %s_minim.mdp -c %s.gro -p %s.top -o %s_minim.tpr
-mdrun -v -nt 1 -deffnm %s_minim
+mdrun -v -deffnm %s_minim
 ''' % ((Prefix,) * 5)
     
     os.system(cmdstring)
@@ -374,25 +353,11 @@ mdrun -v -nt 1 -deffnm %s_minim
         [os.remove(x) for x in filenames]
 
 
-def doNVT(Prefix = 'benwat'):
-    s = (common_params + nvt_mdp) % {'calcsteps': CALCSTEPS, 'nvtsteps': NVTSTEPS, 'stepfreq': STEPFREQ, 'TempSet': TempSet}
-    file('%s_nvt.mdp' % Prefix, 'w').write(s)
-    cmdstring = '''
-grompp -f %s_nvt.mdp -c %s_minim.gro -p %s.top -o %s_nvt.tpr
-mdrun -v -nt 1 -deffnm %s_nvt
-''' % ((Prefix, ) * 5)
-    
-    os.system(cmdstring)
-    if DelTempFiles:
-        filenames = ['mdout.mdp', '%s_nvt.mdp' % Prefix]
-        [os.remove(x) for x in filenames]
-
-
 def doNPT(Prefix = 'benwat'):
     s = (common_params + npt_mdp) % {'calcsteps': CALCSTEPS, 'nptsteps': NPTSTEPS, 'stepfreq': STEPFREQ, 'TempSet': TempSet}
     file('%s_npt.mdp' % Prefix, 'w').write(s)
     cmdstring = '''
-grompp -f %s_npt.mdp -c %s_nvt.gro -p %s.top -o %s_npt.tpr
+grompp -f %s_npt.mdp -c %s_minim.gro -p %s.top -o %s_npt.tpr
 mdrun -v -nt 1 -deffnm %s_npt
 ''' % ((Prefix, ) * 5)
     
@@ -418,9 +383,8 @@ mdrun -v -nt 1 -deffnm %s_prod
     
 
 Prefix = makePrefix()
-BoxL = getBoxL(); print BoxL
+BoxL = getBoxL()
 genData(BoxL = BoxL, Prefix = Prefix)
 doEneMin(Prefix = Prefix)
-doNVT(Prefix = Prefix)
 doNPT(Prefix = Prefix)
 doProd(Prefix = Prefix)
