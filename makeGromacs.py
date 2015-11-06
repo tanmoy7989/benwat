@@ -3,7 +3,7 @@ import os, sys
 import numpy as np
 
 
-DelTempFiles = False
+DelTempFiles = True
 NB = 10
 NW = 500
 TempSet = 300
@@ -15,6 +15,9 @@ NPTSTEPS = 1000
 PRODSTEPS = 1000
 STEPFREQ = 100
 RESTARTFREQ = 100
+
+# executables
+os.system('source /usr/local/gromacs/bin/GMXRC')
 
 # source benzene gro file (Christine Peter)
 benzene_gro = '''Benzene
@@ -262,20 +265,20 @@ npt_mdp = '''
 ;define = -DPOSRES
 
 integrator = md
-nsteps %(nptsteps)d
+nsteps = %(nptsteps)d
 
 ;temp-coupling params (nose-hoover used in Nico's paper)
 nsttcouple = -1
-tcoupl = berendsen
+tcoupl = v-rescale
 tc-grps = Protein Non-Protein
-tau-t = 0.1 0.1
+tau-t = 0.5 0.5
 ref-t = %(TempSet)g %(TempSet)g
 
 ;press-coupling params (Parrinello-Rahman used in Nico's paper)
 nstpcouple = -1
 pcoupl = berendsen
 pcoupltype = isotropic
-tau-p = 1.0 1.0
+tau-p = 3.0 3.0
 ref-p = 1.0 1.0
 compressibility = 4.5e-5
 refcoord_scaling = no
@@ -291,12 +294,12 @@ gen_seed = -1
 # production
 prod_mdp = '''
 integrator = md
-nsteps %(prodsteps)d
+nsteps = %(prodsteps)d
 
 nsttcouple = -1
 tcoupl = nose-hoover
 tc-grps = Protein SOL
-tau-t = 0.1 0.1
+tau-t = 0.5 0.5
 ref-t = %(TempSet)g %(TempSet)g
 
 pcoupl = no
@@ -320,7 +323,7 @@ def getBoxL():
     return BoxL + pad
 
 def genData(BoxL = 3., Prefix = 'benwat'):
-    BoxL_packmol = BoxL * 10.
+    BoxL_packmol = BoxL * 10. # since packmol operates in Angstroms
     file('benzene.gro', 'w').write(benzene_gro)
     file('water.gro', 'w').write(water_gro)
     file('solvate.inp', 'w').write(packmol_script % {'Prefix': Prefix, 'NB': NB, 'NW': NW, 'Len': BoxL_packmol/2.})
@@ -344,7 +347,7 @@ def doEneMin(Prefix = 'benwat'):
     file('%s_minim.mdp' % Prefix, 'w').write(s)
     cmdstring = '''
 grompp -f %s_minim.mdp -c %s.gro -p %s.top -o %s_minim.tpr
-mdrun -v -deffnm %s_minim
+mdrun nt 1 -deffnm %s_minim
 ''' % ((Prefix,) * 5)
     
     os.system(cmdstring)
@@ -354,11 +357,11 @@ mdrun -v -deffnm %s_minim
 
 
 def doNPT(Prefix = 'benwat'):
-    s = (common_params + npt_mdp) % {'calcsteps': CALCSTEPS, 'nptsteps': NPTSTEPS, 'stepfreq': STEPFREQ, 'TempSet': TempSet}
+    s = (npt_mdp + common_params) % {'calcsteps': CALCSTEPS, 'nptsteps': NPTSTEPS, 'stepfreq': STEPFREQ, 'TempSet': TempSet}
     file('%s_npt.mdp' % Prefix, 'w').write(s)
     cmdstring = '''
 grompp -f %s_npt.mdp -c %s_minim.gro -p %s.top -o %s_npt.tpr
-mdrun -v -nt 1 -deffnm %s_npt
+mdrun -nt 1 -deffnm %s_npt
 ''' % ((Prefix, ) * 5)
     
     os.system(cmdstring)
@@ -372,7 +375,7 @@ def doProd(Prefix = 'benwat'):
     file('%s_prod.mdp' % Prefix, 'w').write(s)
     cmdstring = '''
 grompp -f %s_prod.mdp -c %s_npt.gro -p %s.top -o %s_prod.tpr
-mdrun -v -nt 1 -deffnm %s_prod
+mdrun -nt 1 -deffnm %s_prod
 ''' % ((Prefix, ) * 5)
     
     os.system(cmdstring)
@@ -385,6 +388,7 @@ mdrun -v -nt 1 -deffnm %s_prod
 Prefix = makePrefix()
 BoxL = getBoxL()
 genData(BoxL = BoxL, Prefix = Prefix)
+
 doEneMin(Prefix = Prefix)
 doNPT(Prefix = Prefix)
 doProd(Prefix = Prefix)
