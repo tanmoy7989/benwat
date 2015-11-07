@@ -351,7 +351,7 @@ editconf -f %(Prefix)s.pdb -o %(Prefix)s.gro -bt cubic -box %(BoxL)g %(BoxL)g %(
 
     os.system(cmdstring)
     if DelTempFiles:
-        filenames = ['benzene.gro', 'water.gro', 'solvate.inp', 'benzene.pdb', 'water.pdb', '%s.pdb' % Prefix]
+        filenames = ['benzene.gro', 'water.gro', 'solvate.inp', 'benzene.pdb', 'water.pdb', '%(Prefix)s.pdb' % paramdict]
         [os.remove(x) for x in filenames]
 
 
@@ -366,7 +366,7 @@ mdrun -nt %(Ncores)d -deffnm %(Prefix)s_minim
     
     os.system(cmdstring)
     if DelTempFiles:
-        filenames = ['mdout.mdp', '%s_minim.mdp' % Prefix]
+        filenames = ['mdout.mdp', '%(Prefix)s_minim.mdp' % paramdict]
         [os.remove(x) for x in filenames]
 
 
@@ -381,7 +381,7 @@ mdrun -nt %(Ncores)d -deffnm %(Prefix)s_npt
     
     os.system(cmdstring)
     if DelTempFiles:
-        filenames = ['mdout.mdp', '%s_npt.mdp' % Prefix]
+        filenames = ['mdout.mdp', '%(Prefix)s_npt.mdp' % paramdict]
         [os.remove(x) for x in filenames]
 
 
@@ -396,18 +396,12 @@ mdrun -nt %(Ncores)d -deffnm %(Prefix)s_prod
     
     os.system(cmdstring)
     if DelTempFiles:
-        filenames = ['mdout.mdp', '%s_prod.mdp' % Prefix]
+        filenames = ['mdout.mdp', '%(Prefix)s_prod.mdp' % paramdict]
         [os.remove(x) for x in filenames]
                                                                                                
     
 # test
-if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        NB = int(sys.argv[1])
-        NW = int(sys.argv[2])
-        TempSet = float(sys.argv[3])
-        Ncores = int(sys.argv[4])     
-        
+if __name__ == '__main__': 
     Prefix = makePrefix()
     BoxL = makeBoxL()
     paramdict = makeParamDict(Prefix = Prefix, BoxL = BoxL)
