@@ -4,12 +4,15 @@ import numpy as np
 
 
 DelTempFiles = True
-NB = 10
+
+# system parameters
+NB = 20
 NW = 500
 TempSet = 300
 
 # iteration steps
-CALCSTEPS = 5
+TIMESTEP = 0.002 #ps
+NEIGHCALCSTEPS = 5
 MINSTEPS = 1000
 NPTSTEPS = 1000
 PRODSTEPS = 1000
@@ -17,7 +20,8 @@ STEPFREQ = 100
 RESTARTFREQ = 100
 
 # executables
-os.system('source /usr/local/gromacs/bin/GMXRC')
+os.system('source /share/apps/x86_64/gromacs/bin/GMXRC')
+Ncores = 8
 
 # source benzene gro file (Christine Peter)
 benzene_gro = '''Benzene
@@ -180,13 +184,13 @@ structure benzene.pdb
   number %(NB)d
   resnumbers 2
   centerofmass
-  inside box -%(Len)d -%(Len)d -%(Len)d %(Len)d %(Len)d %(Len)d
+  inside box -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g 
 end structure
 
 structure water.pdb
   number %(NW)d
   resnumbers 2
-  inside box -%(Len)d -%(Len)d -%(Len)d %(Len)d %(Len)d %(Len)d
+  inside box -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g 
 end structure
 ''' 
 
@@ -239,15 +243,15 @@ lincs-warnangle = 30
 pbc = xyz
 
 ; time-stepping
-dt = 0.002
+dt = %(timestep)g
 
 ;output frequency settings
 nstcalcenergy = %(calcsteps)d
 nstenergy = %(stepfreq)d
 nstlog = %(stepfreq)d
-nstxout = %(stepfreq)d
-nstvout = %(stepfreq)d
-nstfout = 0
+;nstxout = %(stepfreq)d
+;nstvout = %(stepfreq)d
+;nstfout = 0
 nstxtcout = %(stepfreq)d
 '''
 
@@ -262,7 +266,8 @@ nsteps = %(minsteps)d
 
 # npt equlibration
 npt_mdp = '''
-;define = -DPOSRES
+; v-rescale temp. coupling and berendsen press. coupling used 
+; for quick and dirty equilbration
 
 integrator = md
 nsteps = %(nptsteps)d
@@ -308,12 +313,11 @@ continuation = yes
 gen_vel = no
 '''
 
-
 def makePrefix():
     Prefix = 'NB%dNW%d' % (NB, NW)
     return Prefix
 
-def getBoxL():
+def makeBoxL():
     #specific vol of water
     N_A = 6.023e23
     v = (18./N_A) * (1e-2 * 1e9)**3.
@@ -322,19 +326,28 @@ def getBoxL():
     pad = 0.4 #nm
     return BoxL + pad
 
-def genData(BoxL = 3., Prefix = 'benwat'):
-    BoxL_packmol = BoxL * 10. # since packmol operates in Angstroms
+def makeParamDict(BoxL, Prefix = 'benwat'):
+    d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'prodsteps': PRODSTEPS, 'calcsteps': NEIGHCALCSTEPS,
+         'stepfreq': STEPFREQ, 'restartfreq': RESTARTFREQ, 'timestep': TIMESTEP,  
+         'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(BoxL * 10.),
+         'TempSet': TempSet, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
+
+    return d
+    
+    
+def makeData(paramdict = None):
+    if paramdict is None: raise TypeError('First populate param dict')
     file('benzene.gro', 'w').write(benzene_gro)
     file('water.gro', 'w').write(water_gro)
-    file('solvate.inp', 'w').write(packmol_script % {'Prefix': Prefix, 'NB': NB, 'NW': NW, 'Len': BoxL_packmol/2.})
-    file('%s.top' % Prefix, 'w'). write(topology % {'NB': NB, 'NW': NW})
+    file('solvate.inp', 'w').write(packmol_script % paramdict)
+    file('%(Prefix)s.top' % paramdict, 'w'). write(topology % paramdict)
     
     cmdstring = '''
 editconf -f benzene.gro -o benzene.pdb
 editconf -f water.gro -o water.pdb
 packmol < solvate.inp
-editconf -f %s.pdb -o %s.gro -bt cubic -box %f %f %f
-''' % (Prefix, Prefix, BoxL, BoxL, BoxL)
+editconf -f %(Prefix)s.pdb -o %(Prefix)s.gro -bt cubic -box %(BoxL)g %(BoxL)g %(BoxL)g
+''' % paramdict
 
     os.system(cmdstring)
     if DelTempFiles:
@@ -342,13 +355,14 @@ editconf -f %s.pdb -o %s.gro -bt cubic -box %f %f %f
         [os.remove(x) for x in filenames]
 
 
-def doEneMin(Prefix = 'benwat'):
-    s =(common_params + minim_mdp) % {'calcsteps': CALCSTEPS, 'minsteps': MINSTEPS, 'stepfreq': STEPFREQ}
-    file('%s_minim.mdp' % Prefix, 'w').write(s)
+def doEneMin(paramdict = None):
+    if paramdict is None: raise TypeError('First populate param dict')
+    s =(common_params + minim_mdp) % paramdict
+    file('%(Prefix)s_minim.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %s_minim.mdp -c %s.gro -p %s.top -o %s_minim.tpr
-mdrun nt 1 -deffnm %s_minim
-''' % ((Prefix,) * 5)
+grompp -f %(Prefix)s_minim.mdp -c %(Prefix)s.gro -p %(Prefix)s.top -o %(Prefix)s_minim.tpr
+mdrun -nt %(Ncores)d -deffnm %(Prefix)s_minim
+''' % paramdict
     
     os.system(cmdstring)
     if DelTempFiles:
@@ -356,13 +370,14 @@ mdrun nt 1 -deffnm %s_minim
         [os.remove(x) for x in filenames]
 
 
-def doNPT(Prefix = 'benwat'):
-    s = (npt_mdp + common_params) % {'calcsteps': CALCSTEPS, 'nptsteps': NPTSTEPS, 'stepfreq': STEPFREQ, 'TempSet': TempSet}
-    file('%s_npt.mdp' % Prefix, 'w').write(s)
+def doNPT(paramdict = None):
+    if paramdict is None: raise TypeError('First populate param dict')
+    s = (npt_mdp + common_params) % paramdict
+    file('%(Prefix)s_npt.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %s_npt.mdp -c %s_minim.gro -p %s.top -o %s_npt.tpr
-mdrun -nt 1 -deffnm %s_npt
-''' % ((Prefix, ) * 5)
+grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr
+mdrun -nt %(Ncores)d -deffnm %(Prefix)s_npt
+''' % paramdict
     
     os.system(cmdstring)
     if DelTempFiles:
@@ -370,13 +385,14 @@ mdrun -nt 1 -deffnm %s_npt
         [os.remove(x) for x in filenames]
 
 
-def doProd(Prefix = 'benwat'):
-    s = (common_params + prod_mdp) % {'calcsteps': CALCSTEPS, 'prodsteps': PRODSTEPS, 'stepfreq': STEPFREQ, 'TempSet': TempSet}
-    file('%s_prod.mdp' % Prefix, 'w').write(s)
+def doProd(paramdict = None):
+    if paramdict is None: raise TypeError('First populate param dict')
+    s = (common_params + prod_mdp) % paramdict
+    file('%(Prefix)s_prod.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %s_prod.mdp -c %s_npt.gro -p %s.top -o %s_prod.tpr
-mdrun -nt 1 -deffnm %s_prod
-''' % ((Prefix, ) * 5)
+grompp -f %(Prefix)s_prod.mdp -c %(Prefix)s_npt.gro -p %(Prefix)s.top -o %(Prefix)s_prod.tpr
+mdrun -nt %(Ncores)d -deffnm %(Prefix)s_prod
+''' % paramdict
     
     os.system(cmdstring)
     if DelTempFiles:
@@ -384,11 +400,21 @@ mdrun -nt 1 -deffnm %s_prod
         [os.remove(x) for x in filenames]
                                                                                                
     
+# test
+if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        NB = int(sys.argv[1])
+        NW = int(sys.argv[2])
+        TempSet = float(sys.argv[3])
+        Ncores = int(sys.argv[4])     
+        
+    Prefix = makePrefix()
+    BoxL = makeBoxL()
+    paramdict = makeParamDict(Prefix = Prefix, BoxL = BoxL)
+    print paramdict
+    
+    makeData(paramdict)
 
-Prefix = makePrefix()
-BoxL = getBoxL()
-genData(BoxL = BoxL, Prefix = Prefix)
-
-doEneMin(Prefix = Prefix)
-doNPT(Prefix = Prefix)
-doProd(Prefix = Prefix)
+    doEneMin(paramdict)
+    doNPT(paramdict)
+    doProd(paramdict)
