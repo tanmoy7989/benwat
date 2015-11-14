@@ -2,8 +2,8 @@
 
 import sys, os
 
-
-pyMain = os.path.join('data', 'gromacs', 'main.py')
+data_dir = os.path.abspath('./data/gromacs')
+pyMain = 'masterGromacs.py'
 sJobIn = '''
 #!/bin/bash
 #
@@ -12,23 +12,27 @@ sJobIn = '''
 #$ -j y
 #$ -S /bin/bash
 #$ -N %(jobname)s
-#$ -pe ompi %(Ncores)d
 
 #$ -m be
 #$ -M tanmoy.7989@gmail.com
 
 date
-python main.py %(NB)d %(NW)d
+python main.py %(NB)d %(NW)d %(Ncores)d
 '''
 
-NB = [10, 20]
-NW = [500, 100]
-
+NB = [250]
+NW = [250]
+Ncores = 8
 
 Nruns = len(NB)
 for i in range(Nruns):
     Prefix = 'NB%dNW%d' % (NB[i], NW[i])
-    jobScriptName =os.path.join('data', 'gromacs', Prefix+'.sh')
-    file(jobScriptName, 'w').write(sJobIn % {'NB': NB[i], 'NW': NW[i],'jobname': Prefix, 'Ncores': 8})
+    Dir = os.path.join(data_dir, Prefix)
+    jobScriptName = os.path.join(Dir, Prefix+'.sh')
+    
+    if not os.path.isdir(Dir):  os.mkdir(Dir)
+    file(jobScriptName, 'w').write(sJobIn % {'NB': NB[i], 'NW': NW[i],'jobname': Prefix, 'Ncores': Ncores})
+    
+    os.system('cp %s %s' % (pyMain, Dir))
     os.system('chmod 777 ' + jobScriptName)
     
