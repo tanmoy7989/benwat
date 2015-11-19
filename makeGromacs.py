@@ -7,20 +7,23 @@ DelTempFiles = True
 
 # system parameters
 NB = 20
-NW = 500
+NW = 50
 TempSet = 300
 
 # iteration steps
-TIMESTEP = 0.002 #ps
+# (dummy values and must be set by calling script)
+TIMESTEP = 0.002 
 NEIGHCALCSTEPS = 5
-MINSTEPS = 1000
-NPTSTEPS = 1000
+MINSTEPS = 100
+NPTSTEPS = 10000
+EQUILSTEPS = 1000
 PRODSTEPS = 1000
-STEPFREQ = 100
-RESTARTFREQ = 100
+STEPFREQ = 10
+RESTART_TIME_MINS = 30
 
-# executables
-os.system('source /share/apps/x86_64/gromacs/bin/GMXRC')
+# executables and parallelization
+os.system('export PATH=$PATH:/share/apps/x86_64/gromacs/bin')
+os.system('source /share/apps/x86_64/gromacs/bin/GMXRC.bash')
 Ncores = 8
 
 # source benzene gro file (Christine Peter)
@@ -205,7 +208,7 @@ ns_type = grid
 cutoff-scheme = group
 verlet-buffer-drift  = 0
 rlist = 1
-rlistlong = 1.4
+rlistlong = 1.0
 
 ;electrostatics
 coulombtype = PME
@@ -229,7 +232,7 @@ optimize-fft = yes
 vdwtype = Cut-off
 vdw-modifier = None
 rvdw-switch = 0
-rvdw = 1.4
+rvdw = 1.0
 
 ;constraints
 constraints = all-bonds
@@ -264,7 +267,7 @@ nstcgsteep = 1000
 nsteps = %(minsteps)d
 '''
 
-# npt equlibration
+# npt
 npt_mdp = '''
 ; v-rescale temp. coupling and berendsen press. coupling used 
 ; for quick and dirty equilbration
@@ -296,6 +299,40 @@ gen_temp = %(TempSet)g
 gen_seed = -1
 '''
 
+# equilibration 1 (post npt)
+equil1_mdp = '''
+integrator = md
+nsteps = %(equilsteps)d
+
+nsttcouple = -1
+tcoupl = nose-hoover
+tc-grps = Protein SOL
+tau-t = 0.5 0.5
+ref-t = %(TempSet)g %(TempSet)g
+
+pcoupl = no
+
+continuation = yes
+gen_vel = no
+'''
+
+# equilibration 2 (pre prod NVT)
+equil2_mdp = '''
+integrator = md
+nsteps = %(equilsteps)d
+
+nsttcouple = -1
+tcoupl = nose-hoover
+tc-grps = Protein SOL
+tau-t = 0.5 0.5
+ref-t = %(TempSet)g %(TempSet)g
+
+pcoupl = no
+
+continuation = yes
+gen_vel = no
+'''
+
 # production
 prod_mdp = '''
 integrator = md
@@ -322,13 +359,14 @@ def makeBoxL():
     N_A = 6.023e23
     v = (18./N_A) * (1e-2 * 1e9)**3.
     BoxVol = v * NW
-    BoxL = BoxVol ** (1./3.)
-    pad = 0.4 #nm
+    BoxL = BoxVol**(1./3.) #boxlength based on water packing
+    BoxL = max(BoxL, 2.8) #boxlength  = 2 * 1.4 (this is the pair cutoff sent by Christine)
+    pad = 1.4 #nm
     return BoxL + pad
 
 def makeParamDict(BoxL, Prefix = 'benwat'):
-    d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'prodsteps': PRODSTEPS, 'calcsteps': NEIGHCALCSTEPS,
-         'stepfreq': STEPFREQ, 'restartfreq': RESTARTFREQ, 'timestep': TIMESTEP,  
+    d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'equilsteps': EQUILSTEPS, 'prodsteps': PRODSTEPS, 
+         'calcsteps': NEIGHCALCSTEPS,'stepfreq': STEPFREQ, 'restart_time_mins': RESTART_TIME_MINS, 'timestep': TIMESTEP, 
          'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(BoxL * 10.),
          'TempSet': TempSet, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
 
@@ -370,13 +408,14 @@ mdrun -nt %(Ncores)d -deffnm %(Prefix)s_minim
         [os.remove(x) for x in filenames]
 
 
+
 def doNPT(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s = (npt_mdp + common_params) % paramdict
     file('%(Prefix)s_npt.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr
-mdrun -nt %(Ncores)d -deffnm %(Prefix)s_npt
+mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
 ''' % paramdict
     
     os.system(cmdstring)
@@ -385,13 +424,80 @@ mdrun -nt %(Ncores)d -deffnm %(Prefix)s_npt
         [os.remove(x) for x in filenames]
 
 
+
+def doEquil1(paramdict = None):
+    if paramdict is None: raise TypeError('First populate param dict')
+    s = (common_params + equil1_mdp) % paramdict
+    file('%(Prefix)s_equil1.mdp' % paramdict, 'w').write(s)
+    cmdstring = '''
+grompp -f %(Prefix)s_equil1.mdp -c %(Prefix)s_npt.gro -p %(Prefix)s.top -o %(Prefix)s_equil1.tpr -t %(Prefix)s_npt.cpt
+mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil1
+''' % paramdict
+    
+    os.system(cmdstring)
+    if DelTempFiles:
+        filenames = ['mdout.mdp', '%(Prefix)s_equil1.mdp' % paramdict]
+        [os.remove(x) for x in filenames]
+
+
+
+def rescaleBox(paramdict = None):
+    pass
+    print 'Calculating avg. box size...'
+    cmdstring = '''
+g_traj -f %(Prefix)s_equil1.xtc -s %(Prefix)s_equil1.tpr -ob box.xvg << EOF
+0
+''' % paramdict
+    os.system(cmdstring)
+    
+    BoxL0 = paramdict['BoxL']
+    BoxL = np.array([0., 0., 0.])
+    of = open('box.xvg', 'r')
+    nframes = 0
+    for line in of:
+        if line.startswith('#') or line.startswith('@'):
+            continue
+        else:
+            l = line.split()
+            BoxL[0] += float(l[1])
+            BoxL[1] += float(l[2])
+            BoxL[2] += float(l[3])
+            nframes += 1
+    of.close()
+    
+    BoxL[0] /= nframes; BoxL[1] /= nframes; BoxL[2] /= nframes  
+    scalefactor = BoxL/BoxL0
+    paramdict['scaleX'] = scalefactor[0]; paramdict['scaleY'] = scalefactor[1]; paramdict['scaleZ'] = scalefactor[2]
+    cmdstring = 'editconf -f %(Prefix)s_npt.gro -o %(Prefix)s_rescaled.gro -scale %(scaleX)g %(scaleY)g %(scaleZ)g' % paramdict
+    
+    os.system(cmdstring)
+    if DelTempFiles: os.remove('box.xvg')
+    
+
+
+def doEquil2(paramdict = None):
+    if paramdict is None: raise TypeError('First populate param dict')
+    s = (common_params + equil2_mdp) % paramdict
+    file('%(Prefix)s_equil2.mdp' % paramdict, 'w').write(s)
+    cmdstring = '''
+grompp -f %(Prefix)s_equil2.mdp -c %(Prefix)s_rescaled.gro -p %(Prefix)s.top -o %(Prefix)s_equil2.tpr
+mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil2
+''' % paramdict
+    
+    os.system(cmdstring)
+    if DelTempFiles:
+        filenames = ['mdout.mdp', '%(Prefix)s_equil2.mdp' % paramdict]
+        [os.remove(x) for x in filenames]
+
+
+
 def doProd(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s = (common_params + prod_mdp) % paramdict
     file('%(Prefix)s_prod.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %(Prefix)s_prod.mdp -c %(Prefix)s_npt.gro -p %(Prefix)s.top -o %(Prefix)s_prod.tpr
-mdrun -nt %(Ncores)d -deffnm %(Prefix)s_prod
+grompp -f %(Prefix)s_prod.mdp -c %(Prefix)s_equil2.gro -p %(Prefix)s.top -o %(Prefix)s_prod.tpr -t %(Prefix)s_equil2.cpt
+mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_prod
 ''' % paramdict
     
     os.system(cmdstring)
@@ -405,10 +511,11 @@ if __name__ == '__main__':
     Prefix = makePrefix()
     BoxL = makeBoxL()
     paramdict = makeParamDict(Prefix = Prefix, BoxL = BoxL)
-    print paramdict
     
     makeData(paramdict)
-
     doEneMin(paramdict)
     doNPT(paramdict)
+    doEquil1(paramdict)
+    rescaleBox(paramdict)
+    doEquil2(paramdict)
     doProd(paramdict)

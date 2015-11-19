@@ -3,7 +3,7 @@
 import sys, os
 
 data_dir = os.path.abspath('./data/gromacs')
-pyMain = 'masterGromacs.py'
+pyMain = 'main_Gromacs.py'
 sJobIn = '''
 #!/bin/bash
 #
@@ -17,7 +17,7 @@ sJobIn = '''
 #$ -M tanmoy.7989@gmail.com
 
 date
-python main.py %(NB)d %(NW)d %(Ncores)d
+python %(pyMain)s %(NB)d %(NW)d %(Ncores)d
 '''
 
 NB = [250]
@@ -31,7 +31,7 @@ for i in range(Nruns):
     jobScriptName = os.path.join(Dir, Prefix+'.sh')
     
     if not os.path.isdir(Dir):  os.mkdir(Dir)
-    file(jobScriptName, 'w').write(sJobIn % {'NB': NB[i], 'NW': NW[i],'jobname': Prefix, 'Ncores': Ncores})
+    file(jobScriptName, 'w').write(sJobIn % {'NB': NB[i], 'NW': NW[i],'jobname': Prefix, 'Ncores': Ncores, 'pyMain': pyMain})
     
     os.system('cp %s %s' % (pyMain, Dir))
     os.system('chmod 777 ' + jobScriptName)
