@@ -32,4 +32,7 @@ print paramdict
 md.makeData(paramdict)
 md.doEneMin(paramdict)
 md.doNPT(paramdict)
+md.doEquil1(paramdict)
+md.rescaleBox(paramdict)
+md.doEquil2(paramdict)
 md.doProd(paramdict)
