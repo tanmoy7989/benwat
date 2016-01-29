@@ -442,7 +442,6 @@ mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil1
 
 
 def rescaleBox(paramdict = None):
-    pass
     print 'Calculating avg. box size...'
     cmdstring = '''
 g_traj -f %(Prefix)s_equil1.xtc -s %(Prefix)s_equil1.tpr -ob box.xvg << EOF

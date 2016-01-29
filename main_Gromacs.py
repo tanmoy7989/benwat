@@ -2,7 +2,7 @@
 
 import os, sys
 
-sys.path.append(os.path.abspath('../../../'))
+sys.path.append('/home/cask0/home/tsanyal/benwat')
 import makeGromacs as md
 
 NB = int(sys.argv[1])
