@@ -261,9 +261,9 @@ nstxtcout = %(stepfreq)d
 # energy minimization
 minim_mdp = '''
 integrator = steep
-emtol = 10
+emtol = 1
 emstep = 0.01
-nstcgsteep = 1000
+nstcgsteep = 5000
 nsteps = %(minsteps)d
 '''
 
@@ -399,7 +399,7 @@ def doEneMin(paramdict = None):
     file('%(Prefix)s_minim.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_minim.mdp -c %(Prefix)s.gro -p %(Prefix)s.top -o %(Prefix)s_minim.tpr
-mdrun -nt %(Ncores)d -deffnm %(Prefix)s_minim
+mdrun -ntmpi %(Ncores)d -npme 2 -dlb yes -deffnm %(Prefix)s_minim
 ''' % paramdict
     
     os.system(cmdstring)
@@ -415,7 +415,7 @@ def doNPT(paramdict = None):
     file('%(Prefix)s_npt.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr
-mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
+mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
 ''' % paramdict
     
     os.system(cmdstring)
@@ -431,7 +431,7 @@ def doEquil1(paramdict = None):
     file('%(Prefix)s_equil1.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_equil1.mdp -c %(Prefix)s_npt.gro -p %(Prefix)s.top -o %(Prefix)s_equil1.tpr -t %(Prefix)s_npt.cpt
-mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil1
+mdrun -nt %(Ncores)d -npme 2 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil1
 ''' % paramdict
     
     os.system(cmdstring)
@@ -480,7 +480,7 @@ def doEquil2(paramdict = None):
     file('%(Prefix)s_equil2.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_equil2.mdp -c %(Prefix)s_rescaled.gro -p %(Prefix)s.top -o %(Prefix)s_equil2.tpr
-mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil2
+mdrun -nt %(Ncores)d -npme 2 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil2
 ''' % paramdict
     
     os.system(cmdstring)
@@ -496,7 +496,7 @@ def doProd(paramdict = None):
     file('%(Prefix)s_prod.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_prod.mdp -c %(Prefix)s_equil2.gro -p %(Prefix)s.top -o %(Prefix)s_prod.tpr -t %(Prefix)s_equil2.cpt
-mdrun -nt %(Ncores)d -cpt %(restart_time_mins)g -deffnm %(Prefix)s_prod
+mdrun -nt %(Ncores)d -npme 2 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_prod
 ''' % paramdict
     
     os.system(cmdstring)

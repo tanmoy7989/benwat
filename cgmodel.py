@@ -27,6 +27,7 @@ ProdSteps = 2000000
 StepFreq = 1000
 LangevinGamma = 0.01
 opt_cases = ["SP", "SPLD_BW"]
+RestartFrom = 'SP'
 
 # MD settings
 #TODO
@@ -41,7 +42,7 @@ sim.srel.base.ErrorDiffEneFracTol = 1.0
 																				
 # system parameters
 TempSet = 300
-Name_W = 'W' ; Name_B = 'PHE'
+Name_W = 'W' ; Name_B = 'B'
 Mass_W = 18.01 ; Mass_B = 78.11
 Dia_W = 2.8 ; Dia_B = 5.3
 SPCutScale = 2.5
@@ -150,19 +151,22 @@ def makeSys():
     return Sys
 
 
-def getPotentialSeq(Sys):
-    pass   
+def restart(Sys, ParamString = None):
+    x = opt_cases.index[RestartFrom]
+    opt_cases = opt_cases[x:]
+    if ParamString: Sys.ForceField.SetParamString(ParamString)
+    Sys.ForceField.Update
+    return Sys
 
-                
-def makeCGFF(Sys, ParamString = None, RestartFrom = 'SP'):
-    # make map (note: all AA trajectories are stored in mapped format)
+    
+def runSrel(Sys, ParamString = None):
+    # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
     Map = sim.atommap.PosMap()
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
     
     # optimizer class
     Trj = pickleTraj(LammpsTraj, Verbose = False)
-    OptPrefix = Prefix + '_'
-    Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = OptPrefix)
+    Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
     sim.srel.optimizetraj.PlotFmt = 'svg'
     Opt.StepsMin = MinSteps
 
@@ -181,7 +185,7 @@ def makeCGFF(Sys, ParamString = None, RestartFrom = 'SP'):
     [P.FreezeParam() for P in Sys.ForceField]
     
     # relative entropy minimization
-    #TODO: add restart and multiple case handling
+    Sys = restart(Sys = Sys, RestartFrom = RestartFrom, ParamString = ParamString)
     for i, case in enumerate(opt_cases):
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + case
@@ -203,3 +207,6 @@ def makeCGFF(Sys, ParamString = None, RestartFrom = 'SP'):
     print "Srel minimization for different cases finished"
     del Opt
 
+
+def runCGMD():
+    pass
