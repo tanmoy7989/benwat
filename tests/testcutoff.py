@@ -16,3 +16,4 @@ measure.rdf(NB = NB, NW = NW, LammpsTraj = LammpsTraj, Prefix = 'rdf_test')
 measure.fsw(NB = NB, NW = NW, LammpsTraj = LammpsTraj, Prefix = 'fsw_test',
             LDCuts_BW = LDCuts, LDCuts_WB = LDCuts, FirstShellCut_BW = FSWCut,
             FirstShellCut_WB = FSWCut)
+        
