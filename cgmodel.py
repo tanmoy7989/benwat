@@ -18,25 +18,22 @@ LDCutBW = None
 LDCutWB = None
 ParamString = None
 
-# CG optimization settings
-LammpsTraj = None
+# MD settings
 MinSteps = 1000
 NPTSteps = 1000
 EquilSteps = 500000
 ProdSteps = 2000000
 StepFreq = 1000
-LangevinGamma = 0.01
-opt_cases = ["SP", "SPLD_BW"]
-RestartFrom = 'SP'
 
-# MD settings
-#TODO
+# Srel optimization settings
+LammpsTraj = None
+CG_Thermostat = None
+LangevinGamma = 0.01
 
 # Lammps settings
 sim.export.lammps.LammpsExec = '/home/cask0/home/tsanyal/software/tanmoy_lammps/lammps-15May15/src/lmp_ZIN'
 sim.export.lammps.InnerCutoff = 0.02
-#increase tolerance to prevent sim-Lammps mismatch blowing up the srel run
-sim.srel.base.ErrorDiffEneFracTol = 1.0 
+sim.srel.base.ErrorDiffEneFracTol = 1.0 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run 
 
 ################################################################################
 																				
@@ -151,15 +148,16 @@ def makeSys():
     return Sys
 
 
-def restart(Sys, ParamString = None):
-    x = opt_cases.index[RestartFrom]
-    opt_cases = opt_cases[x:]
+def restart(Sys, opts, ParamString = None, RestartFrom = 'SP'):
+    if DEBUG: print "Restart point = ", RestartFrom
+    x = opts.index(RestartFrom)
+    opts = opts[x:]
     if ParamString: Sys.ForceField.SetParamString(ParamString)
     Sys.ForceField.Update
-    return Sys
+    return Sys, opts
 
     
-def runSrel(Sys, ParamString = None):
+def runSrel(Sys, ParamString = None, RestartFrom = "SP"):
     # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
     Map = sim.atommap.PosMap()
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
@@ -176,7 +174,7 @@ def runSrel(Sys, ParamString = None):
         Opt.TempFileDir = os.getcwd()
 
     # output initial histograms if required
-    if DEBUG:
+    if not DEBUG:
         Opt.MakeModTraj(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
         Opt.OutputModHistFile()
         Opt.OutputPlot()
@@ -185,8 +183,9 @@ def runSrel(Sys, ParamString = None):
     [P.FreezeParam() for P in Sys.ForceField]
     
     # relative entropy minimization
-    Sys = restart(Sys = Sys, RestartFrom = RestartFrom, ParamString = ParamString)
-    for i, case in enumerate(opt_cases):
+    Opt_cases = ["SP", "SPLD_BW"]
+    Sys, Opt_cases = restart(Sys = Sys, opts = Opt_cases, RestartFrom = RestartFrom, ParamString = ParamString)
+    for i, case in enumerate(Opt_cases):
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + case
         print "\n\nOptimizing for the case: ", case
@@ -208,5 +207,11 @@ def runSrel(Sys, ParamString = None):
     del Opt
 
 
-def runCGMD():
-    pass
+def runCGMD(Sys):
+    Sys.ForceField.SetParamString(ParamString)
+    # export to Lammps
+    Trj, TrjFile = sim.export.lammps.MakeLammpsTraj(Sys = Sys, Prefix = Prefix, NStepsMin = MinSteps, 
+                                                    NStepsEquil = EquilSteps, NStepsProd = ProdSteps, 
+                                                    WriteFreq = StepFreq, TrajFile = '.lammpstrj.gz', Verbose = True)
+    return Trj, TrjFile  
+
