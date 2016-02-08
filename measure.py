@@ -132,12 +132,8 @@ def BennettErr(BE11, BE21, BE22, BE12, FE):
 
 #### RELATIVE ENTROPY VS. CUTOFF SPACE GENERATOR ####
 
-def Srel_rc(NB, NW, LammpsTraj, data_dir = os.getcwd()):
-    # flags
-    DEBUG = False
-    RefreshLogs = True
 
-    def EvalSysEne(Sys, sampleTrj, TempSet = 300.0, Iter = (0,-1,1)):
+def EvalSysEne(Sys, sampleTrj, TempSet = 300.0, Iter = (0,-1,1)):
         '''
         sampleTrj refer to the state (AA or CG) from which the position
         co-ordintates are being sampled. Sys is a system with the forcefield
@@ -170,8 +166,12 @@ def Srel_rc(NB, NW, LammpsTraj, data_dir = os.getcwd()):
             raw_input()
         
         return beta * Ene
-    
-    ########### MAIN #################        
+
+
+def Srel_rc(NB, NW, LammpsTraj, data_dir = os.getcwd()):
+    # flags
+    DEBUG = False
+    RefreshLogs = True
     Prefix = 'NB%dNW%d' % (NB, NW)
     
     TempSet = 300.0
@@ -255,56 +255,124 @@ def Srel_rc(NB, NW, LammpsTraj, data_dir = os.getcwd()):
         
 #### CORRELATION CALCULATOR WITH HYDRATION SHELL WATERS ####
 
-#1) radial distribution function
+#1) Local density indicator function coefficients
+
+def calcCoeff(Cut):
+    R2sq = Cut*Cut
+    R1sq = 0.8 * 0.8 * R2sq
+    ratio = R1sq/R2sq
+    denom = (1-ratio)*(1-ratio)*(1-ratio)
+    c0 = (1.-3.*ratio)/denom
+    c2 = (1./R2sq) * (6*ratio)/denom
+    c4 = - (1./(R2sq*R2sq)) * (3. + 3.*ratio)/denom
+    c6 = (1./(R2sq*R2sq*R2sq)) * (2./denom)
+    return np.array([c0,c2,c4,c6])
+
+
+
+#2) radial distribution function
 
 def rdf(NB, NW, LammpsTraj, Prefix = None):
     Trj = pickleTraj(LammpsTraj, Verbose = True)
     BoxL = Trj.FrameData['BoxL'][0]
-	Cut = 0.5 * BoxL
-	if BoxL == 0: BoxL = float(raw_input('BoxL = 0, found. Enter nonperiodic boxlength: '))
+    Cut = 0.5 * BoxL
+    if BoxL == 0: BoxL = float(raw_input('BoxL = 0, found. Enter nonperiodic boxlength: '))
 	
-	FrameRange = range(0, len(Trj), 1)
-	NFrames = len(FrameRange)
-	Bin_min = 1.00
-	Bin_max = Cut
-	Bin_delta = (Bin_max - Bin_min)/float(Nbins)
-	Bin_centers = np.zeros([Nbins], np.float64)
-	for i in range(Nbins): Bin_centers[i] = Bin_min + (i+0.5)*Bin_delta	
-	g = np.zeros([Nbins, 3], np.float64) #1-BB #2-WW #3-BW
+    start = 0 ; stop = len(Trj) ; stepfreq = 1
+    FrameRange = range(start, stop, stepfreq)
+    NFrames = len(FrameRange)
+    Nbins = 50
+    Bin_min = 1.00
+    Bin_max = Cut
+    Bin_delta = (Bin_max - Bin_min)/float(Nbins)
+    Bin_centers = np.zeros([Nbins], np.float64)
+    for i in range(Nbins): Bin_centers[i] = Bin_min + (i+0.5)*Bin_delta	
+    g = np.zeros([Nbins, 3], np.float64) #1-BB #2-WW #3-BW
 	 
-	# frame stepping
-	pb = sim.utility.ProgressBar(Text = 'Processing frame by frame...', Steps = NFrames)
-	for frame in FrameRange:
+    # frame stepping
+    pb = sim.utility.ProgressBar(Text = 'Processing frame by frame...', Steps = NFrames)
+    for frame in FrameRange:
 		Pos = Trj[frame]
 		g = measurelib.rdf(g = g, bin_centers = Bin_centers, bin_delta = Bin_delta, 
 					       pos = Pos, atomtypes = Trj.AtomTypes, boxl = BoxL)										
 		pb.Update(int(frame/stepfreq))
 		
 	# normalize the rdf
-	rdf = {'bin_centers': Bin_centers, 'BB': '', 'WW': '', 'BW': ''}
-	print 'Normalizing g(r)...'
-	BoxVol = BoxL**3.
-	g /= NFrames
-	gofr = g * BoxVol
-	for j in range(Nbins):
-		r = Bin_centers[j] - 0.5*Bin_delta
-		next_r = Bin_centers[j] + 0.5*Bin_delta
-		gofr[j,:] /= (4.*np.pi/3.) * (next_r**3. - r**3.)
+    rdf = {'bin_centers': Bin_centers, 'BB': '', 'WW': '', 'BW': ''}
+    print 'Normalizing g(r)...'
+    BoxVol = BoxL**3.
+    g /= NFrames
+    gofr = g * BoxVol
+    for j in range(Nbins):
+        r = Bin_centers[j] - 0.5*Bin_delta
+        next_r = Bin_centers[j] + 0.5*Bin_delta
+        gofr[j,:] /= (4.*np.pi/3.) * (next_r**3. - r**3.)
 
-	rdf['BB'] = gofr[:,0]/(NB * (NB - 1)/2.)
-	rdf['WW'] = gofr[:,1]/(NW * (NW - 1)/2.)
-	rdf['BW'] = gofr[:,2]/(NB * NW)
+    rdf['centers'] = bin_centers
+    rdf['BB'] = gofr[:,0]/(NB * (NB - 1)/2.)
+    rdf['WW'] = gofr[:,1]/(NW * (NW - 1)/2.)
+    rdf['BW'] = gofr[:,2]/(NB * NW)
 		
 	# dumping data
-	if not Prefix: Prefix = 'NB%dNW%d_rdf' % (NB, NW)
-	pickleName = os.path.join(Prefix + '.pickle')
-	pickle.dump(rdf, open(pickleName, 'w'))	
+    if not Prefix: Prefix = 'NB%dNW%d_rdf' % (NB, NW)
+    pickleName = Prefix + '.pickle'
+    pickle.dump(rdf, open(pickleName, 'w'))	
 
     
 
 #2) first shell waters
 
-def fsw():
-    pass
-
-                                                                
+def fsw(NB, NW, LammpsTraj, LDCuts_BW, LDCuts_WB = None, 
+        FirstShellCut_BW = None, FirstShellCut_WB = None, Prefix = None):
+    
+    Trj = pickleTraj(LammpsTraj, Verbose = True)
+    BoxL = Trj.FrameData['BoxL'][0]
+    if BoxL == 0: BoxL = float(raw_input('BoxL = 0, found. Enter nonperiodic boxlength: '))
+	
+	# frame stepping
+    start = 0 ; stop = len(Trj) ; stepfreq = 1
+    FrameRange = range(start, stop, stepfreq)
+    NFrames = len(FrameRange)
+    NCuts = len(LDCuts_BW)
+    LocalDensity       = {'BW': np.zeros([NB*NFrames,NCuts], np.float64),
+					      'WB': np.zeros([NW*NFrames, NCuts], np.float64)}
+	
+    FirstShellNeigh    = {'BW': np.zeros(NB*NFrames, np.float64),
+					      'WB': np.zeros(NW*NFrames, np.float64)}
+					      
+    coeff_BW = np.zeros([NCuts, 4], np.float64)
+    coeff_WB = np.zeros([NCuts, 4], np.float64)
+    for i in range(NCuts):
+	   coeff_BW[i] = calcCoeff(LDCuts_BW[i])
+	   coeff_WB[i] = calcCoeff(LDCuts_WB[i])
+	   
+    pb = sim.utility.ProgressBar(Text = 'Processing frame by frame...', Steps = NFrames)
+    count_BW = 0; count_WB = 0
+    for frame in FrameRange:
+		Pos = Trj[frame]
+		fsn_BW = np.zeros(NB, np.float64); ld_BW = np.zeros([NB, NCuts], np.float64)
+		fsn_WB = np.zeros(NW, np.float64); ld_WB = np.zeros([NW, NCuts], np.float64)
+		(fsn_BW, fsn_WB, ld_BW, ld_WB) = measurelib.nearestneigh(fsn_bw = fsn_BW, ld_bw = ld_BW, fsn_wb = fsn_WB, ld_wb = ld_WB,
+																 pos = Pos, atomtypes = Trj.AtomTypes,
+												 				 lduppercuts_bw = LDCuts_BW, lduppercuts_wb = LDCuts_WB,
+												 				 firstshellcut_bw = FirstShellCut_BW, firstshellcut_wb = FirstShellCut_WB, 
+												 				 coeff_bw = coeff_BW, coeff_wb = coeff_WB, boxl = BoxL)
+												 				 
+		FirstShellNeigh['BW'][count_BW : count_BW + NB] = fsn_BW
+		FirstShellNeigh['WB'][count_WB : count_WB + NW] = fsn_WB
+		for j in range(NCuts):
+			LocalDensity['BW'][count_BW:count_BW+NB, j] = ld_BW[:,j]
+			LocalDensity['WB'][count_WB:count_WB+NW, j] = ld_WB[:,j]
+		
+		count_BW += NB; count_WB += NW
+		pb.Update(frame/stepfreq)
+		
+	
+	# dumping data
+    if not Prefix: Prefix = 'NB%dNW%d_fsw' % (NB, NW)
+    pickleName = Prefix + '.pickle'
+    ret = {'LDCuts_BW': LDCuts_BW,
+		   'LDCuts_WB': LDCuts_WB,
+		   'FirstShellNeigh': FirstShellNeigh,
+		   'LocalDensity': LocalDensity}
+    pickle.dump(ret, open(pickleName, 'w'))

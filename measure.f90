@@ -3,7 +3,6 @@ SUBROUTINE RDF(g, Nbins, Bin_centers, Bin_delta, &
 AtomTypes, Pos, NAtom, BoxL)
 	
 	IMPLICIT NONE
-	
 	INTEGER, INTENT(IN) :: NAtom, Nbins
 	REAL(8), INTENT(IN) :: Bin_delta
 	REAL(8), INTENT(IN), DIMENSION(0:Nbins-1) :: Bin_centers
@@ -59,7 +58,7 @@ END SUBROUTINE
 
 
 
-SUBROUTINE NEARESTNEIGH(fsn_BW, ld_BW, ld_WB,& 
+SUBROUTINE NEARESTNEIGH(fsn_BW, fsn_WB, ld_BW, ld_WB,& 
 Pos, NAtom, NB, NW, AtomTypes, NCuts, LDUpperCuts_BW, LDUpperCuts_WB, &
 FirstShellCut_BW, FirstShellCut_WB, coeff_BW, coeff_WB, BoxL)
 
