@@ -178,7 +178,8 @@ SOL              %(NW)d
 
 #packmol input script
 packmol_script = '''
-tolerance 2.0
+tolerance 4.0
+discale 1.5
 filetype pdb
 output %(Prefix)s.pdb
 add_amber_ter
@@ -239,7 +240,7 @@ constraints = all-bonds
 constraint-algorithm = LINCS
 shake-tol = 0.0001
 lincs-order = 4
-lincs-iter = 1
+lincs-iter = 4 # increasing this leads to more minimum energy configs
 lincs-warnangle = 30
 
 ;box 
@@ -258,12 +259,12 @@ nstlog = %(stepfreq)d
 nstxtcout = %(stepfreq)d
 '''
 
-# energy minimization
-minim_mdp = '''
+# initial energy minimization
+minim1_mdp = '''
 integrator = steep
 emtol = 1
 emstep = 0.01
-nstcgsteep = 5000
+nstcgsteep = 20000
 nsteps = %(minsteps)d
 '''
 
@@ -316,6 +317,15 @@ continuation = yes
 gen_vel = no
 '''
 
+# energy minimization 2 (right after rescaling box)
+minim2_mdp = '''
+integrator = steep
+emtol = 1
+emstep = 0.01
+nstcgsteep = 20000
+nsteps = %(minsteps)d
+'''
+
 # equilibration 2 (pre prod NVT)
 equil2_mdp = '''
 integrator = md
@@ -360,14 +370,12 @@ def makeBoxL():
     v = (18./N_A) * (1e-2 * 1e9)**3.
     BoxVol = v * NW
     BoxL = BoxVol**(1./3.) #boxlength based on water packing
-    BoxL = max(BoxL, 2.8) #boxlength  = 2 * 1.4 (this is the pair cutoff sent by Christine)
-    pad = 1.4 #nm
-    return BoxL + pad
+    return BoxL + 2.8      #2.8 nm is 2*cutoff sent by Christine 
 
 def makeParamDict(BoxL, Prefix = 'benwat'):
     d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'equilsteps': EQUILSTEPS, 'prodsteps': PRODSTEPS, 
          'calcsteps': NEIGHCALCSTEPS,'stepfreq': STEPFREQ, 'restart_time_mins': RESTART_TIME_MINS, 'timestep': TIMESTEP, 
-         'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(BoxL * 10.),
+         'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(10.*BoxL-2.),
          'TempSet': TempSet, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
 
     return d
@@ -393,18 +401,18 @@ editconf -f %(Prefix)s.pdb -o %(Prefix)s.gro -bt cubic -box %(BoxL)g %(BoxL)g %(
         [os.remove(x) for x in filenames]
 
 
-def doEneMin(paramdict = None):
+def doEneMin1(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
-    s =(common_params + minim_mdp) % paramdict
-    file('%(Prefix)s_minim.mdp' % paramdict, 'w').write(s)
+    s =(common_params + minim1_mdp) % paramdict
+    file('%(Prefix)s_minim1.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %(Prefix)s_minim.mdp -c %(Prefix)s.gro -p %(Prefix)s.top -o %(Prefix)s_minim.tpr
-mdrun -ntmpi %(Ncores)d -npme 2 -dlb yes -deffnm %(Prefix)s_minim
+grompp -f %(Prefix)s_minim1.mdp -c %(Prefix)s.gro -p %(Prefix)s.top -o %(Prefix)s_minim1.tpr
+mdrun -ntmpi %(Ncores)d -npme 2 -dlb yes -deffnm %(Prefix)s_minim1
 ''' % paramdict
     
     os.system(cmdstring)
     if DelTempFiles:
-        filenames = ['mdout.mdp', '%(Prefix)s_minim.mdp' % paramdict]
+        filenames = ['mdout.mdp', '%(Prefix)s_minim1.mdp' % paramdict]
         [os.remove(x) for x in filenames]
 
 
@@ -414,7 +422,7 @@ def doNPT(paramdict = None):
     s = (npt_mdp + common_params) % paramdict
     file('%(Prefix)s_npt.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr
+grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim1.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr
 mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
 ''' % paramdict
     
@@ -431,7 +439,7 @@ def doEquil1(paramdict = None):
     file('%(Prefix)s_equil1.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_equil1.mdp -c %(Prefix)s_npt.gro -p %(Prefix)s.top -o %(Prefix)s_equil1.tpr -t %(Prefix)s_npt.cpt
-mdrun -nt %(Ncores)d -npme 2 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil1
+mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil1
 ''' % paramdict
     
     os.system(cmdstring)
@@ -474,13 +482,29 @@ g_traj -f %(Prefix)s_equil1.xtc -s %(Prefix)s_equil1.tpr -ob box.xvg << EOF
     
 
 
+def doEneMin2(paramdict = None):
+    if paramdict is None: raise TypeError('First populate param dict')
+    s =(common_params + minim2_mdp) % paramdict
+    file('%(Prefix)s_minim2.mdp' % paramdict, 'w').write(s)
+    cmdstring = '''
+grompp -f %(Prefix)s_minim2.mdp -c %(Prefix)s_rescaled.gro -p %(Prefix)s.top -o %(Prefix)s_minim2.tpr
+mdrun -ntmpi %(Ncores)d -npme 2 -dlb yes -deffnm %(Prefix)s_minim2
+''' % paramdict
+    
+    os.system(cmdstring)
+    if DelTempFiles:
+        filenames = ['mdout.mdp', '%(Prefix)s_minim2.mdp' % paramdict]
+        [os.remove(x) for x in filenames]
+
+
+
 def doEquil2(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s = (common_params + equil2_mdp) % paramdict
     file('%(Prefix)s_equil2.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %(Prefix)s_equil2.mdp -c %(Prefix)s_rescaled.gro -p %(Prefix)s.top -o %(Prefix)s_equil2.tpr
-mdrun -nt %(Ncores)d -npme 2 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil2
+grompp -f %(Prefix)s_equil2.mdp -c %(Prefix)s_minim2.gro -p %(Prefix)s.top -o %(Prefix)s_equil2.tpr
+mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil2
 ''' % paramdict
     
     os.system(cmdstring)
@@ -496,7 +520,7 @@ def doProd(paramdict = None):
     file('%(Prefix)s_prod.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_prod.mdp -c %(Prefix)s_equil2.gro -p %(Prefix)s.top -o %(Prefix)s_prod.tpr -t %(Prefix)s_equil2.cpt
-mdrun -nt %(Ncores)d -npme 2 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_prod
+mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_prod
 ''' % paramdict
     
     os.system(cmdstring)
@@ -507,14 +531,15 @@ mdrun -nt %(Ncores)d -npme 2 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefi
     
 # test
 if __name__ == '__main__': 
-    Prefix = makePrefix()
+    Prefix = 'gro_test'
     BoxL = makeBoxL()
     paramdict = makeParamDict(Prefix = Prefix, BoxL = BoxL)
     
-    makeData(paramdict)
-    doEneMin(paramdict)
-    doNPT(paramdict)
-    doEquil1(paramdict)
-    rescaleBox(paramdict)
+    #makeData(paramdict)
+    #doEneMin1(paramdict)
+    #doNPT(paramdict)
+    #doEquil1(paramdict)
+    #rescaleBox(paramdict)
+    #doEneMin2(paramdict)
     doEquil2(paramdict)
     doProd(paramdict)
