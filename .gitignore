@@ -1,10 +1,24 @@
+# python and shared lib extras
 *pyc
 *.so
 *~
+
+# analysis data
 *.txt
+*.pickle
+
+# data files
 *.gro
 *.mdp
 *.tpr
 *.trr
 *.edr
 *.xyz
+*.lammpstrj
+*.lammpstrj.gz
+*.trj
+
+# images
+*.png
+*.svg
+*.pdf
