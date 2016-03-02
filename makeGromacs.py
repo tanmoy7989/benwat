@@ -5,10 +5,18 @@ import numpy as np
 
 DelTempFiles = True
 
+# constants
+N_A = 6.023e23
+Mass_B = 78.11  #g/mol
+Mass_W = 18.0   #g/mol
+rho_B = 0.874   #g/cc
+rho_W = 1.00    #g/cc
+
 # system parameters
 NB = 20
 NW = 50
 TempSet = 300
+Packmol_tol = 4.0
 
 # iteration steps
 # (dummy values and must be set by calling script)
@@ -178,7 +186,7 @@ SOL              %(NW)d
 
 #packmol input script
 packmol_script = '''
-tolerance 4.0
+tolerance %(Packmol_tol)g
 discale 1.5
 filetype pdb
 output %(Prefix)s.pdb
@@ -364,18 +372,17 @@ def makePrefix():
     Prefix = 'NB%dNW%d' % (NB, NW)
     return Prefix
 
-def makeBoxL():
-    #specific vol of water
-    N_A = 6.023e23
-    v = (18./N_A) * (1e-2 * 1e9)**3.
+def makeBoxL(MolWt = Mass_W, rho = rho_W):
+    #specific vol of species
+    v = (MolWt/(rho*N_A)) * (1e-2 * 1e9)**3.
     BoxVol = v * NW
-    BoxL = BoxVol**(1./3.) #boxlength based on water packing
+    BoxL = BoxVol**(1./3.) #boxlength based on packing of specific molecule (Water or benzene)
     return BoxL + 2.8      #2.8 nm is 2*cutoff sent by Christine 
 
 def makeParamDict(BoxL, Prefix = 'benwat'):
     d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'equilsteps': EQUILSTEPS, 'prodsteps': PRODSTEPS, 
          'calcsteps': NEIGHCALCSTEPS,'stepfreq': STEPFREQ, 'restart_time_mins': RESTART_TIME_MINS, 'timestep': TIMESTEP, 
-         'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(10.*BoxL-2.),
+         'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(10.*BoxL-2.), 'Packmol_tol': Packmol_tol,
          'TempSet': TempSet, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
 
     return d
@@ -456,9 +463,9 @@ g_traj -f %(Prefix)s_equil1.xtc -s %(Prefix)s_equil1.tpr -ob box.xvg << EOF
 0
 ''' % paramdict
     os.system(cmdstring)
-    
-    BoxL0 = paramdict['BoxL']
-    BoxL = np.array([0., 0., 0.])
+   
+    # get average BoxL after equilibration
+    BoxL = np.array([0., 0., 0.]) 
     of = open('box.xvg', 'r')
     nframes = 0
     for line in of:
@@ -471,11 +478,19 @@ g_traj -f %(Prefix)s_equil1.xtc -s %(Prefix)s_equil1.tpr -ob box.xvg << EOF
             BoxL[2] += float(l[3])
             nframes += 1
     of.close()
+    BoxL /= nframes
     
-    BoxL[0] /= nframes; BoxL[1] /= nframes; BoxL[2] /= nframes  
-    scalefactor = BoxL/BoxL0
+    # get final BoxL after equilbration
+    line = file('%(Prefix)s_equil1.gro' % paramdict, 'r').readlines()[-1].strip()
+    BoxL0 = []
+    [BoxL0.append(float(x)) for x in line.split()]
+    
+    scalefactor = (BoxL/BoxL0)
+    Target_vol = np.prod(BoxL) * (1e-9) * 1e3 #liter
+    Target_rho = ((Mass_B*NB + Mass_W*NW)/N_A) / Target_vol #g/L
     paramdict['scaleX'] = scalefactor[0]; paramdict['scaleY'] = scalefactor[1]; paramdict['scaleZ'] = scalefactor[2]
-    cmdstring = 'editconf -f %(Prefix)s_npt.gro -o %(Prefix)s_rescaled.gro -scale %(scaleX)g %(scaleY)g %(scaleZ)g' % paramdict
+    paramdict['Target_rho'] = Target_rho
+    cmdstring = 'editconf -f %(Prefix)s_equil1.gro -o %(Prefix)s_rescaled.gro -scale %(scaleX)g %(scaleY)g %(scaleZ)g' % paramdict
     
     os.system(cmdstring)
     if DelTempFiles: os.remove('box.xvg')
