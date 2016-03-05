@@ -7,372 +7,47 @@ import numpy as np
 import sim
 import pickleTraj
 import parse_potential
-import cgmodel as cg
-import measurelib
+import cgmodel as cgsys.path.append('~/'); from selLDCut import *
 
+def getBoxL(LammpsTraj):
+    trj = pickleTraj(LammpsTraj)
+    return trj.FrameData['BoxL']
 
-#### FREE ENERGY ESTIMATION ROUTINES ####
-
-#1) Free Energy Pertturbation
-
-def FEP(BE11, BE22, BE12, BE21, Dir = 1, Verbose = True):
-    '''
-    calculates forward or avg of forward and reverse 
-    free energy differences using simple free energy
-    perturbation
-    '''
+def gen_Srel_rc(LammpsTraj, LDCuts = []):
+    # prepare the system
+    cg.LammpsTraj = LammpsTraj
+    Prefix = cg.makeSysPrefix()
+    cg.LDCutBW = LDCuts[0]
+    cg.BoxL = getBoxL(LammpsTraj)
+    Sys = cg.makeSys()
     
-    DeltaBE = BE11 - BE12
-    FE1 = -np.log(np.mean(np.exp(DeltaBE - DeltaBE.max()))) - DeltaBE.max()
-    DeltaBE = BE22 - BE21
-    FE2 = np.log(np.mean(np.exp(DeltaBE - DeltaBE.max()))) + DeltaBE.max()
-
-    if Dir == 1:
-        FE = FE1 
-    elif Dir == 2:
-        FE = 0.5*(FE1 + FE2)
-        
-    if Verbose:
-        print "\t---> %dD Free Energy Perturbation gives: %f" % (Dir, FE)
-        
-    return FE
-
-
-
-#2) Bennett's Method
-
-def BennettFE(BE11, BE21, BE22, BE12, Verbose = False, 
-              Tol = 1.e-10, MaxIter = 10000):
-    '''
-    Returns -log(Q2/Q1) = beta2 F2 - beta1 F1 using the Bennett method.  
-    BEij is the list of beta*E values for system i evaluated in system j.
-    '''
+    # initialize the Bennett and FEP based Delta_Srel calculator
+    SrelBennett.Sys = Sys
+    SrelBennett.LammpsTraj = LammpsTraj
+    SrelBennett.Prefix = Prefix
+    SrelBennett.LDCuts = LDCuts
+    SrelBennett.LDDelta = 1.2
+    SrelBennett.genFileNames()
     
-    fd = lambda x,w : 1./(np.exp(w) + np.exp(x))
+    # setup cg model and CG-MD simulations for different cutoffs
+    SrelBennett.runCGMD()
     
-    
-    #check array sizes
-    N1 = len(BE11)
-    if len(BE12) != len(BE11):
-        raise ValueError("BE11 and BE12 arrays are not the same length.")
-    N2 = len(BE21)
-    if len(BE22) != len(BE21):
-        raise ValueError("BE21 and BE22 arrays are not the same length.")        
-    if not (np.all(np.isfinite(BE11)) and np.all(np.isfinite(BE12)) 
-            and np.all(np.isfinite(BE21)) and np.all(np.isfinite(BE22))):
-        if DEBUG: 
-            print "BE11 BE12 BE22 BE21"
-            for i in xrange(n):
-                print i, BE11[i], BE12[i], BE22[i], BE21[i]
-        raise ValueError("Found non-finite value in BE11, BE12, BE22, or BE21")
-    #fe perturbation for initial guesses
-    DeltaBE = BE11 - BE12
-    FE1 = -np.log(np.mean(np.exp(DeltaBE - DeltaBE.max()))) - DeltaBE.max()
-    DeltaBE = BE22 - BE21
-    FE2 = np.log(np.mean(np.exp(DeltaBE - DeltaBE.max()))) + DeltaBE.max()
-    if Verbose:
-        print "Bennett initial guesses: %f, %f" % (FE1, FE2)
-    M = np.log(float(N2)/float(N1))
-    #setup first points: x is beta2 F2 - beta1 F1, y should be zero
-    xo = FE1
-    NVals = BE21 - BE22 + xo + M
-    DVals = BE12 - BE11 - xo - M
-    maxterm = -max(NVals.max(), DVals.max())
-    Num = np.sum(fd(NVals+maxterm, maxterm))
-    Dem = np.sum(fd(DVals+maxterm, maxterm))
-    yo = np.log(Num / Dem)
-    x = FE2
-    y = 1.
-    #loop until tolerance is met
-    Iter = 0
-    while np.abs(y) > Tol and Iter < MaxIter:
-        Iter += 1
-        #evaluate y for current x
-        NVals = BE21 - BE22 + x + M
-        DVals = BE12 - BE11 - x - M
-        maxterm = -max(NVals.max(), DVals.max())
-        Num = np.sum(fd(NVals+maxterm, maxterm))
-        Dem = np.sum(fd(DVals+maxterm, maxterm))
-        y = np.log(Num / Dem)
-        #predict new x
-        xn = (y*xo-yo*x)/(y-yo)
-        xo = x
-        x = xn
-        yo = y
-        #print messages
-        if Verbose:
-            print "Bennett iteration %d: current error is %.3e" % (Iter, np.abs(y))
-    #now compute the estimated error
-    FE = xo
-    FEerr = BennettErr(BE11, BE21, BE22, BE12, FE)
-    if Verbose:
-        print "Bennett final free energy: %f +- %f" % (FE, FEerr)
-    return FE, FEerr
+    # start Bennett method calculations
+    SrelBennett.Srel_rc()
     
 
+def gen_fsw(LammpsTraj, LDCuts = [], NB = 250, NW = 250):
+    # initialize the fsw calculator
+    fsw.LammpsTraj = LammpsTraj
+    fsw.NCentAtoms = NB ; fsw.NNeighAtoms = NW
+    fsw.CentAtomType = 1 ; fsw.NeighAtomType = 1
+    fsw.LDCuts = LDCuts ; fsw.LDDelta = 1.2
+    fsw.Prefix = 'NB%dNW%d' % (NB, NW) ; fsw.genFileNames()
 
-#3) Error estimate in Bennett's method
-
-def BennettErr(BE11, BE21, BE22, BE12, FE):
-    '''
-    Computes the error in the Bennett calculation, sqrt(var(ln(q2/q1))).
-    Based on Shirts et al, PRL 91, 140601 (2003)
-    '''
-    #compute all "work" measurements
-    W = np.concatenate((BE12 - BE11, BE22 - BE21))
-    #add free energy (ln (Q2/Q1))
-    W = W + FE
-    n = len(W)
-    c = np.max(np.abs(W))
-    terms = 1. / (2.*np.exp(-c) + np.exp(W-c) + np.exp(-W-c))
-    err = (np.exp(c) / np.mean(terms) - 4.) / n
-    err = np.sqrt(err)
-    return err    
-
-
-#### RELATIVE ENTROPY VS. CUTOFF SPACE GENERATOR ####
-
-
-def EvalSysEne(Sys, sampleTrj, TempSet = 300.0, Iter = (0,-1,1)):
-        '''
-        sampleTrj refer to the state (AA or CG) from which the position
-        co-ordintates are being sampled. Sys is a system with the forcefield
-        of the state at which energies are to be evaluated
-        returns beta * Penergy of system
-        '''
-        start = Iter[0]; stop = Iter[1]; freq = Iter[2]
-        if stop == -1: stop = len(sampleTrj)  
-        FrameRange = range(start, stop, freq)
-        Nframes = len(FrameRange)
-        Ene = np.zeros([Nframes], np.float64)
-        beta = 1./(TempSet * Sys.Units.kB)
+    # calculate rdf
+    fsw.makeRDF()
     
-        # for each frame, minimage and calculate energy
-        Ene_Ind = 0
-        pb = sim.utility.ProgressBar(Text = 'Processing frames...',  Steps = Nframes)
-        for frame in FrameRange:
-            Pos = sampleTrj[frame]
-            Sys.Arrays.Pos = Pos
-            Sys.ForceField.Eval()
-            Ene[Ene_Ind] = Sys.PEnergy
-            if DEBUG:
-                print frame, Ene_Ind, Ene[Ene_Ind]
-                raw_input()    
-            pb.Update(Ene_Ind)
-            Ene_Ind += 1
-        if DEBUG: 
-            print '(sample, eval)', Sys.sample_trajtype, Sys.eval_trajtype
-            print len(Ene), len(sampleTrj)
-            raw_input()
-        
-        return beta * Ene
-
-
-def Srel_rc(NB, NW, LammpsTraj, data_dir = os.getcwd()):
-    # flags
-    DEBUG = False
-    RefreshLogs = True
-    Prefix = 'NB%dNW%d' % (NB, NW)
+    # calculate maximal correlation
+    #fsw.makeFSWCorrelation(rdfCut = ?)
+    #fsw.calcCorrelation()
     
-    TempSet = 300.0
-    Delta = 1.2
-    base_fmt = {'cg_ff': '%s_%d_SPLD_sum.txt' % Prefix, 'cg_trj': '%s_%d_MD.lammpstrj.gz' % Prefix}
-
-    # write output headers
-    LDCuts = np.arange(4.5, 10.0, 0.1)
-    delta_Srel = 0.
-    datalog = {'Bennett': '%s_Srel_Bennett.dat' % datalog_prefix, 'Fep': '%s_Srel_Fep.dat' % datalog_prefix }
-    for key in datalog.keys():
-        this_log = datalog[key]
-        if not os.path.isfile(this_log) or RefreshLogs:
-            of = open(this_log, 'w')
-            of.write('#LDCut \t Srel \t Err\n')
-            of.write('%g \t %f \t %f\n' % (LDCuts[0], delta_Srel, 0.0))
-            of.close()
-
-    # extract all necessary AA data
-    Trj_AA = pickleTraj(LammpsTraj)
-    BoxL = Trj_AA.FrameData['BoxL']
-    
-    # loop over different LDCuts
-    for i, LDCut in enumerate(LDCuts[0:-1]):
-        print '\n\nLDCUTs = (%g, %g)\n' % (LDCuts[i], LDCuts[i+1])
-        sumfile1 = base_fmt['cg_ff'] % (fftype, i); sumfile2 = base_fmt['cg_ff'] % (fftype, (i+1))
-        trajfile1 = base_fmt['cg_trj'] % (fftype, i) ; trajfile2 = base_fmt['cg_trj'] % (fftype, (i+1))
-        ParamString1 = parse_potential.parseParamString(sumfile1); ParamString2 = parse_potential.parseParamString(sumfile2)
-        Trj_CG_1 = pickleTraj(trajfile1); Trj_CG_2 = pickleTraj(trajfile2)
-    
-    # create systems with forcefields of LDCuts i and i+1
-    cg.NB = NB
-    cg.NW = NW
-    cg.BoxL = BoxL
-    cg.LDCutBW = LDCuts[i] ; cg.ParamString = ParamString1 ; Sys1 = cg.makeSys()
-    cg.LDCutBW = LDCuts[i+1] ; cg.ParamString = ParamString2 ; Sys2 = cg.makeSys()
-                       
-    # calculate Energy difference in AA ensemble
-    print '--> Calculating energies in AA ensemble'
-    Sys1.__setattr__('sample_trajtype', 'AA') ; Sys2.__setattr__('sample_trajtype', 'AA')
-    Sys1.sample_trajtype = 'AA'; Sys2.sample_trajtype = 'AA'
-    BE1_AA = EvalSysEne(Sys = Sys1, sampleTrj = Trj_AA)
-    BE2_AA = EvalSysEne(Sys = Sys2, sampleTrj = Trj_AA)
-    
-    # reprocess trajectories to calculate free energy differences
-    print '--> Reprocessing trajectories'
-    Sys1.sample_trajtype = 'CG'; Sys2.sample_trajtype = 'CG'
-    
-    BE11 = EvalSysEne(Sys = Sys1, sampleTrj = Trj_CG_1)
-    BE21 = EvalSysEne(Sys = Sys1, sampleTrj = Trj_CG_2)
-    BE22 = EvalSysEne(Sys = Sys2, sampleTrj = Trj_CG_2)
-    BE12 = EvalSysEne(Sys = Sys2, sampleTrj = Trj_CG_1)
-    Nframes1 = len(BE11); Nframes2 = len(BE22)
-    
-    # running Bennett's algorithm
-    print "--> Running Bennett's method..."
-    FE1, Err1 = BennettFE(BE11 = BE11, BE22 = BE22, BE12 = BE12, BE21 = BE21)
-    delta_Srel1 = (np.mean(BE2_AA) - np.mean(BE1_AA)) - FE1
-    
-    # running Free Energy perturbation
-    print "--> Running 1D Free Energy Perturbation..."
-    FE2 = FEP(BE11 = BE11, BE22 = BE22, BE12 = BE12, BE21 = BE21)
-    delta_Srel2 = (np.mean(BE2_AA) - np.mean(BE1_AA)) - FE2
-    Err2 = 0.0
-    
-    # logging data
-    for key in datalog.keys():
-        if key == 'Bennett':
-            delta_Srel = delta_Srel1
-            Err = Err1
-        elif key == 'Fep':
-            delta_Srel = delta_Srel2
-            Err = Err2
-        
-        this_log = datalog[key]
-        of = open(this_log, 'a')
-        of.write('%g \t %f \t %f\n' %(LDCuts[i+1], delta_Srel, Err))
-        of.close()
-        
-        
-        
-#### CORRELATION CALCULATOR WITH HYDRATION SHELL WATERS ####
-
-#1) Local density indicator function coefficients
-
-def calcCoeff(Cut):
-    R2sq = Cut*Cut
-    R1sq = 0.8 * 0.8 * R2sq
-    ratio = R1sq/R2sq
-    denom = (1-ratio)*(1-ratio)*(1-ratio)
-    c0 = (1.-3.*ratio)/denom
-    c2 = (1./R2sq) * (6*ratio)/denom
-    c4 = - (1./(R2sq*R2sq)) * (3. + 3.*ratio)/denom
-    c6 = (1./(R2sq*R2sq*R2sq)) * (2./denom)
-    return np.array([c0,c2,c4,c6])
-
-
-
-#2) radial distribution function
-
-def rdf(NB, NW, LammpsTraj, Prefix = None):
-    Trj = pickleTraj(LammpsTraj, Verbose = True)
-    BoxL = Trj.FrameData['BoxL'][0]
-    Cut = 0.5 * BoxL
-    if BoxL == 0: BoxL = float(raw_input('BoxL = 0, found. Enter nonperiodic boxlength: '))
-	
-    start = 0 ; stop = len(Trj) ; stepfreq = 1
-    FrameRange = range(start, stop, stepfreq)
-    NFrames = len(FrameRange)
-    Nbins = 50
-    Bin_min = 1.00
-    Bin_max = Cut
-    Bin_delta = (Bin_max - Bin_min)/float(Nbins)
-    Bin_centers = np.zeros([Nbins], np.float64)
-    for i in range(Nbins): Bin_centers[i] = Bin_min + (i+0.5)*Bin_delta	
-    g = np.zeros([Nbins, 3], np.float64) #1-BB #2-WW #3-BW
-	 
-    # frame stepping
-    pb = sim.utility.ProgressBar(Text = 'Processing frame by frame...', Steps = NFrames)
-    for frame in FrameRange:
-		Pos = Trj[frame]
-		g = measurelib.rdf(g = g, bin_centers = Bin_centers, bin_delta = Bin_delta, 
-					       pos = Pos, atomtypes = Trj.AtomTypes, boxl = BoxL)										
-		pb.Update(int(frame/stepfreq))
-		
-	# normalize the rdf
-    rdf = {'bin_centers': Bin_centers, 'BB': '', 'WW': '', 'BW': ''}
-    print 'Normalizing g(r)...'
-    BoxVol = BoxL**3.
-    g /= NFrames
-    gofr = g * BoxVol
-    for j in range(Nbins):
-        r = Bin_centers[j] - 0.5*Bin_delta
-        next_r = Bin_centers[j] + 0.5*Bin_delta
-        gofr[j,:] /= (4.*np.pi/3.) * (next_r**3. - r**3.)
-
-    rdf['centers'] = bin_centers
-    rdf['BB'] = gofr[:,0]/(NB * (NB - 1)/2.)
-    rdf['WW'] = gofr[:,1]/(NW * (NW - 1)/2.)
-    rdf['BW'] = gofr[:,2]/(NB * NW)
-		
-	# dumping data
-    if not Prefix: Prefix = 'NB%dNW%d_rdf' % (NB, NW)
-    pickleName = Prefix + '.pickle'
-    pickle.dump(rdf, open(pickleName, 'w'))	
-
-    
-
-#2) first shell waters
-
-def fsw(NB, NW, LammpsTraj, LDCuts_BW, LDCuts_WB = None, 
-        FirstShellCut_BW = None, FirstShellCut_WB = None, Prefix = None):
-    
-    Trj = pickleTraj(LammpsTraj, Verbose = True)
-    BoxL = Trj.FrameData['BoxL'][0]
-    if BoxL == 0: BoxL = float(raw_input('BoxL = 0, found. Enter nonperiodic boxlength: '))
-	
-	# frame stepping
-    start = 0 ; stop = len(Trj) ; stepfreq = 1
-    FrameRange = range(start, stop, stepfreq)
-    NFrames = len(FrameRange)
-    NCuts = len(LDCuts_BW)
-    LocalDensity       = {'BW': np.zeros([NB*NFrames,NCuts], np.float64),
-					      'WB': np.zeros([NW*NFrames, NCuts], np.float64)}
-	
-    FirstShellNeigh    = {'BW': np.zeros(NB*NFrames, np.float64),
-					      'WB': np.zeros(NW*NFrames, np.float64)}
-					      
-    coeff_BW = np.zeros([NCuts, 4], np.float64)
-    coeff_WB = np.zeros([NCuts, 4], np.float64)
-    for i in range(NCuts):
-	   coeff_BW[i] = calcCoeff(LDCuts_BW[i])
-	   coeff_WB[i] = calcCoeff(LDCuts_WB[i])
-	   
-    pb = sim.utility.ProgressBar(Text = 'Processing frame by frame...', Steps = NFrames)
-    count_BW = 0; count_WB = 0
-    for frame in FrameRange:
-		Pos = Trj[frame]
-		fsn_BW = np.zeros(NB, np.float64); ld_BW = np.zeros([NB, NCuts], np.float64)
-		fsn_WB = np.zeros(NW, np.float64); ld_WB = np.zeros([NW, NCuts], np.float64)
-		(fsn_BW, fsn_WB, ld_BW, ld_WB) = measurelib.nearestneigh(fsn_bw = fsn_BW, ld_bw = ld_BW, fsn_wb = fsn_WB, ld_wb = ld_WB,
-																 pos = Pos, atomtypes = Trj.AtomTypes,
-												 				 lduppercuts_bw = LDCuts_BW, lduppercuts_wb = LDCuts_WB,
-												 				 firstshellcut_bw = FirstShellCut_BW, firstshellcut_wb = FirstShellCut_WB, 
-												 				 coeff_bw = coeff_BW, coeff_wb = coeff_WB, boxl = BoxL)
-												 				 
-		FirstShellNeigh['BW'][count_BW : count_BW + NB] = fsn_BW
-		FirstShellNeigh['WB'][count_WB : count_WB + NW] = fsn_WB
-		for j in range(NCuts):
-			LocalDensity['BW'][count_BW:count_BW+NB, j] = ld_BW[:,j]
-			LocalDensity['WB'][count_WB:count_WB+NW, j] = ld_WB[:,j]
-		
-		count_BW += NB; count_WB += NW
-		pb.Update(frame/stepfreq)
-		
-	
-	# dumping data
-    if not Prefix: Prefix = 'NB%dNW%d_fsw' % (NB, NW)
-    pickleName = Prefix + '.pickle'
-    ret = {'LDCuts_BW': LDCuts_BW,
-		   'LDCuts_WB': LDCuts_WB,
-		   'FirstShellNeigh': FirstShellNeigh,
-		   'LocalDensity': LocalDensity}
-    pickle.dump(ret, open(pickleName, 'w'))

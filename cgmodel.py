@@ -5,7 +5,7 @@ import numpy as np
 import sim
 import pickleTraj
 
-doMinimize = True
+doMinimize = False
 DEBUG = True
 
 ############################ INPUTS ############################################

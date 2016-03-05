@@ -54,5 +54,5 @@ pickleTraj(LammpsTrjOut, Verbose = True)
 
 
 if DelTempFiles:
-    for x in [LammpsData, TCLFile, LammpsTrj]:
+    for x in [LammpsData, TCLFile]:
         os.remove(x)
