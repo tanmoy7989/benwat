@@ -7,7 +7,8 @@ import numpy as np
 import sim
 import pickleTraj
 import parse_potential
-import cgmodel as cgsys.path.append('~/'); from selLDCut import *
+import cgmodel as cg
+sys.path.append('~/'); from selLDCut import *
 
 def getBoxL(LammpsTraj):
     trj = pickleTraj(LammpsTraj)
@@ -40,14 +41,15 @@ def gen_fsw(LammpsTraj, LDCuts = [], NB = 250, NW = 250):
     # initialize the fsw calculator
     fsw.LammpsTraj = LammpsTraj
     fsw.NCentAtoms = NB ; fsw.NNeighAtoms = NW
-    fsw.CentAtomType = 1 ; fsw.NeighAtomType = 1
+    fsw.CentAtomType = 1 ; fsw.NeighAtomType = 2
     fsw.LDCuts = LDCuts ; fsw.LDDelta = 1.2
     fsw.Prefix = 'NB%dNW%d' % (NB, NW) ; fsw.genFileNames()
 
     # calculate rdf
-    fsw.makeRDF()
+    #fsw.makeRDF()
     
     # calculate maximal correlation
-    #fsw.makeFSWCorrelation(rdfCut = ?)
-    #fsw.calcCorrelation()
+    fsw.makeFSWCorrelation(rdfCut = 4.) 
+    #based on NB250 B-W rdf (but unusual)
+    fsw.calcCorrelation()
     

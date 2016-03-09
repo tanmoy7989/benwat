@@ -14,6 +14,7 @@ NB = 250
 NW = 250
 Prefix = None
 BoxL = None
+LDCutBB = None
 LDCutBW = None
 LDCutWB = None
 ParamString = None
@@ -21,8 +22,8 @@ ParamString = None
 # MD settings
 MinSteps = 1000
 NPTSteps = 1000
-EquilSteps = 500000
-ProdSteps = 2000000
+EquilSteps = 1000000
+ProdSteps = 20000000
 StepFreq = 1000
 
 # Srel optimization settings
@@ -43,8 +44,8 @@ Name_W = 'W' ; Name_B = 'B'
 Mass_W = 18.01 ; Mass_B = 78.11
 Dia_W = 2.8 ; Dia_B = 5.3
 SPCutScale = 2.5
-RhoMin = 0 ; RhoMax = 25 ; LD_Delta = 0.5
-NSPKnots = 25 ; NLDKnots = 25
+RhoMin = 0 ; RhoMax = 50 ; LD_Delta = 0.5
+NSPKnots = 40 ; NLDKnots = 50
 
 
 def makeSysPrefix():
@@ -92,9 +93,11 @@ def makeSys():
     FilterBW = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeB])
     FilterBW_ordered = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeW], Ordered = True)
     FilterWB_ordered = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeB], Ordered = True)
-        
+    FilterBB_ordered = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeB], Ordered = True)
+            
     # potential energy objects (only BB spline if dry benzene)
-    SP_BB = None ; SP_WW = None; SP_BW = None; LD_BW = None; LD_WB = None
+    SP_BB = None ; SP_WW = None; SP_BW = None
+    LD_BW = None; LD_WB = None ; LD_BB = None
     SP = sim.potential.PairSpline
     LD = sim.potential.LocalDensity
     SP_BB = SP(Sys, Cut = SPCutBB, NKnot = NSPKnots, Filter = FilterBB, Label = "SP_BB")
@@ -108,13 +111,19 @@ def makeSys():
         if LDCutWB:
             LD_WB = LD(Sys, Cut = LDCutWB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots, 
                        RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
+        if LDCutBB:
+            LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots, 
+                       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)                  
     
     # system forcefield
-    for P in [SP_BB, SP_WW, SP_BW, LD_BW, LD_WB]:
+    for P in [SP_BB, SP_WW, SP_BW, LD_BB, LD_BW, LD_WB]:
         if P: Sys.ForceField.extend([P])
       
     # set up the histograms, must be done for Srel to work properly
     for P in Sys.ForceField: P.Arg.SetupHist(NBin = 10000, ReportNBin = 100)
+    
+    # spline treatment
+    Sys.ForceField.SetSplineTreatment(NonbondEneSlope = 50., BondEneSlope = 10., AngleEneSlope = 60.)
     
     # compile and load the system
     Sys.Load()
@@ -174,7 +183,7 @@ def runSrel(Sys, ParamString = None, RestartFrom = "SP"):
         Opt.TempFileDir = os.getcwd()
 
     # output initial histograms if required
-    if not DEBUG:
+    if DEBUG:
         Opt.MakeModTraj(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
         Opt.OutputModHistFile()
         Opt.OutputPlot()
@@ -183,8 +192,7 @@ def runSrel(Sys, ParamString = None, RestartFrom = "SP"):
     [P.FreezeParam() for P in Sys.ForceField]
     
     # relative entropy minimization
-    Opt_cases = ["SP", "SPLD_BW"]
-    Sys, Opt_cases = restart(Sys = Sys, opts = Opt_cases, RestartFrom = RestartFrom, ParamString = ParamString)
+    Opt_cases = ["SP", "SPLD_BW", "SPLD_all"]
     for i, case in enumerate(Opt_cases):
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + case
@@ -197,6 +205,10 @@ def runSrel(Sys, ParamString = None, RestartFrom = "SP"):
         if case == 'SPLD_BW':
             for P in Sys.ForceField:
                 if P.Name == 'LD_BW': P.UnfreezeParam()
+        
+        if case == "SPLD_all":
+            for P in Sys.ForceField:
+                if P.Name == 'LD_BB': P.UnfreezeParam()
         
         # add more cases here if required
         
