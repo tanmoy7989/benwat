@@ -296,7 +296,7 @@ nstpcouple = -1
 pcoupl = berendsen
 pcoupltype = isotropic
 tau-p = 3.0 3.0
-ref-p = 1.0 1.0
+ref-p = %(PressSet)g %(PressSet)g
 compressibility = 4.5e-5
 refcoord_scaling = no
 DispCorr = EnerPres
@@ -383,7 +383,7 @@ def makeParamDict(BoxL, Prefix = 'benwat'):
     d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'equilsteps': EQUILSTEPS, 'prodsteps': PRODSTEPS, 
          'calcsteps': NEIGHCALCSTEPS,'stepfreq': STEPFREQ, 'restart_time_mins': RESTART_TIME_MINS, 'timestep': TIMESTEP, 
          'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(10.*BoxL-2.), 'Packmol_tol': Packmol_tol,
-         'TempSet': TempSet, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
+         'TempSet': TempSet, 'PressSet': 1.0, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
 
     return d
     
