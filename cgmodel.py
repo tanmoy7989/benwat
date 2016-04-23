@@ -4,6 +4,7 @@ import os, sys
 import numpy as np
 import sim
 import pickleTraj
+import parse_potential as pp
 
 doMinimize = False
 DEBUG = True
@@ -112,7 +113,7 @@ def makeSys():
             LD_WB = LD(Sys, Cut = LDCutWB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots, 
                        RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
         if LDCutBB:
-            LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots, 
+            LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutBB - LD_Delta, NKnot = NLDKnots, 
                        RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)                  
     
     # system forcefield
@@ -123,7 +124,7 @@ def makeSys():
     for P in Sys.ForceField: P.Arg.SetupHist(NBin = 10000, ReportNBin = 100)
     
     # spline treatment
-    Sys.ForceField.SetSplineTreatment(NonbondEneSlope = 50., BondEneSlope = 10., AngleEneSlope = 60.)
+    Sys.ForceField.SetSplineTreatment(NonbondEneSlope = 40., BondEneSlope = 10., AngleEneSlope = 60.)
     
     # compile and load the system
     Sys.Load()
@@ -156,17 +157,8 @@ def makeSys():
     if DEBUG: print Sys.ForceField.ParamString()
     return Sys
 
-
-def restart(Sys, opts, ParamString = None, RestartFrom = 'SP'):
-    if DEBUG: print "Restart point = ", RestartFrom
-    x = opts.index(RestartFrom)
-    opts = opts[x:]
-    if ParamString: Sys.ForceField.SetParamString(ParamString)
-    Sys.ForceField.Update
-    return Sys, opts
-
     
-def runSrel(Sys, ParamString = None, RestartFrom = "SP"):
+def runSrel(Sys, ParamString = None):
     # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
     Map = sim.atommap.PosMap()
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
@@ -192,7 +184,7 @@ def runSrel(Sys, ParamString = None, RestartFrom = "SP"):
     [P.FreezeParam() for P in Sys.ForceField]
     
     # relative entropy minimization
-    Opt_cases = ["SP", "SPLD_BW", "SPLD_all"]
+    Opt_cases = ["SP", "SPLD_BB", "SPLD_BW", "SPLD_all"]
     for i, case in enumerate(Opt_cases):
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + case
@@ -202,14 +194,30 @@ def runSrel(Sys, ParamString = None, RestartFrom = "SP"):
             for P in Sys.ForceField:
                 if ['SP_WW', 'SP_BB', 'SP_BW'].__contains__(P.Name): P.UnfreezeParam()
         
+        if case == "SPLD_BB":
+            for P in Sys.ForceField:
+                if P.Name == 'LD_BB': P.UnfreezeParam()
+                
         if case == 'SPLD_BW':
             for P in Sys.ForceField:
+                if P.Name == 'LD_BB':
+                    P.SetParam(Knots = 0.)
+                    P.FreezeParam()
                 if P.Name == 'LD_BW': P.UnfreezeParam()
         
         if case == "SPLD_all":
             for P in Sys.ForceField:
-                if P.Name == 'LD_BB': P.UnfreezeParam()
-        
+                P.UnfreezeParam()
+                if P.Name == 'LD_BB':
+                    if os.path.isfile(Prefix+'_SPLD_BB_sum.txt'):
+                        x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
+                        P.SetParam(Knots = x)
+                
+                if P.Name == 'LD_BW':
+                    if os.path.isfile(Prefix+'_SPLD_BW_sum.txt'):
+                        x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
+                        P.SetParam(Knots = x)
+                
         # add more cases here if required
         
         Sys.ForceField.Update()
