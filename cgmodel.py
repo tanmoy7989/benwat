@@ -10,6 +10,9 @@ doMinimize = False
 DEBUG = True
 
 ############################ INPUTS ############################################
+global NB, NW, LDCutBB, LDCutBW, LDCutWB
+global LammpsTraj
+
 # system description
 NB = 250
 NW = 250
@@ -28,10 +31,14 @@ ProdSteps = 20000000
 StepFreq = 1000
 
 # Srel optimization settings
-global LammpsTraj = None
-MultiLammpsTraj = []
+LammpsTraj = None
 CG_Thermostat = None
 LangevinGamma = 0.01
+
+# Multi Srel optimization settings
+MultiLammpsTraj = []
+MultiNBList = []
+MultiNWList = []
 
 # Lammps settings
 sim.export.lammps.LammpsExec = '/home/cask0/home/tsanyal/software/tanmoy_lammps/lammps-15May15/src/lmp_ZIN'
@@ -73,7 +80,9 @@ def SetSPCutoff():
     
 
 def makeSys():
+	global NB, NW, LDCutBB, LDCutBW, LDCutWB
 	global LammpsTraj
+    
     # system chemistry
     AtomTypeW = sim.chem.AtomType(Name_W, Mass = Mass_W, Charge = 0.0, Color = (0,0,1))
     AtomTypeB = sim.chem.AtomType(Name_B, Mass = Mass_B, Charge = 0.0, Color = (1,1,0))
@@ -161,6 +170,9 @@ def makeSys():
 
     
 def runSrel(Sys):
+    global NB, NW, LDCutBB, LDCutBW, LDCutWB
+	global LammpsTraj
+    
     # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
     Map = sim.atommap.PosMap()
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
@@ -229,28 +241,34 @@ def runSrel(Sys):
     del Opt
 
 
-def runMultiSrel(ParamString = None):
+def runMultiSrel():
+	global NB, NW, LDCutBB, LDCutBW, LDCutWB
 	global LammpsTraj
-	if not MultiLammpsTraj:
+	
+	if not MultiLammpsTraj or not MultiNBList or MultiNWList:
 		raise TypeError('Need multiple AA trajectories')
 	
 	Opts = []
-	for Traj in MultiLammpsTraj:
+	for i, Traj in enumerate(MultiLammpsTraj):
 		LammpsTraj = Traj
+		NB = MultiNBList[i]
+		NW = MultiNWList[i]
+		print 'Generating CG system for NB = %d, NW = %d from extended ensemble\n\n' % (NB, NW)
 		Sys = makeSys()
 		Map = sim.atommap.PosMap()
 		for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
     	Trj = pickleTraj(LammpsTraj, Verbose = False)
     	Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
     	sim.srel.optimizetraj.PlotFmt = 'svg'
-    	Opt.StepsMin = MinSteps
     	Opts.append(Opt)
 	
 	del Opt
-	Weights = [1]*len(Opts) #TODO
+	Weights = [1.]*len(Opts) #TODO
 	MultiOpt = sim.srel.OptimizeMultiTrajClass(OptimizeTrajList = Opts, Weights = Weights, 
 											   FilePrefix = Prefix + '_multi')
 
+	MultiOpt.StepsMin = MinSteps
+	
 	# freeze all potentials
     [P.FreezeParam() for P in Sys.ForceField]
     
