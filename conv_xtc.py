@@ -8,11 +8,10 @@ DelTempFiles = True
 
 ## VMD tcl script
 tclscript = '''
-mol addfile %(gro)s
-package require topotools
-topo writelammpsdata %(lammpsdata)s
+mol new %(gro)s
 mol addfile %(xtc)s waitfor all
-animate write lammpstrj %(lammpstrj)s waitfor all
+set selOxygen [atomselect top "not name HW1 and not name HW2"]
+animate write lammpstrj %(lammpstrj)s waitfor all sel $selOxygen
 quit
 '''
 
@@ -31,7 +30,7 @@ TCLFile = os.path.join(TrjDir, 'conv_trj.tcl')
 
 # run vmd
 VMDExec = '/home/cask0/home/tsanyal/software/tanmoy_vmd/vmd'
-VMDParams = {'gro' : GromacsStruct, 'xtc': GromacsTrj, 'lammpsdata': LammpsData, 'lammpstrj': LammpsTrj}
+VMDParams = {'gro' : GromacsStruct, 'xtc': GromacsTrj,'lammpstrj': LammpsTrj}
 file(TCLFile, 'w').write(tclscript % VMDParams)
 os.system('%s -dispdev text -e %s' % (VMDExec, TCLFile))
 os.system('gzip %s' % LammpsTrj)
@@ -42,9 +41,10 @@ LammpsTrjOut = GromacsTrj.split('.')[0] + '.lammpstrj.gz'
 Trj = pickleTraj(LammpsTrjIn, Verbose = False)
 BoxL = Trj.FrameData['BoxL']
 Map = sim.atommap.PosMap()
-# vmd created lammpstraj places all benzene atoms at the beginning
-for i in range(0, NB):  Map += [sim.atommap.AtomMap(Atoms1 = range(i*12, (i+1)*12), Atom2 = i)]
-for i in range(0, NW):  Map += [sim.atommap.AtomMap(Atoms1 = NB*12 + 3*i, Atom2 = NB+i)]
+# vmd created lammpstraj places all benzene atoms at the beginning in (C1,H1,C2,H2,...) sequence
+MassList_B = [12.011, 1.008] * 6
+for i in range(0, NB):  Map += [sim.atommap.AtomMap(Atoms1 = range(i*12, (i+1)*12), Atom2 = i, Mass1 = MassList_B)]
+for i in range(0, NW):  Map += [sim.atommap.AtomMap(Atoms1 = NB*12 + i, Atom2 = NB+i)]
 AtomTypes = [1]*NB + [2]*NW
 MappedTrj = sim.traj.Mapped(Trj, Map, AtomNames = AtomTypes)
 sim.traj.Convert(MappedTrj, sim.traj.LammpsWrite, LammpsTrjOut, Verbose = True)            
@@ -53,6 +53,4 @@ sim.traj.Convert(MappedTrj, sim.traj.LammpsWrite, LammpsTrjOut, Verbose = True)
 pickleTraj(LammpsTrjOut, Verbose = True)
 
 
-if DelTempFiles:
-    for x in [LammpsData, TCLFile]:
-        os.remove(x)
+if DelTempFiles: os.remove(TCLFile)
