@@ -28,7 +28,8 @@ ProdSteps = 20000000
 StepFreq = 1000
 
 # Srel optimization settings
-LammpsTraj = None
+global LammpsTraj = None
+MultiLammpsTraj = []
 CG_Thermostat = None
 LangevinGamma = 0.01
 
@@ -72,6 +73,7 @@ def SetSPCutoff():
     
 
 def makeSys():
+	global LammpsTraj
     # system chemistry
     AtomTypeW = sim.chem.AtomType(Name_W, Mass = Mass_W, Charge = 0.0, Color = (0,0,1))
     AtomTypeB = sim.chem.AtomType(Name_B, Mass = Mass_B, Charge = 0.0, Color = (1,1,0))
@@ -112,6 +114,7 @@ def makeSys():
         if LDCutWB:
             LD_WB = LD(Sys, Cut = LDCutWB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots, 
                        RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
+        
         if LDCutBB:
             LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutBB - LD_Delta, NKnot = NLDKnots, 
                        RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)                  
@@ -152,13 +155,12 @@ def makeSys():
     Int.Method.Thermostat = Int.Method.ThermostatLangevin
     Int.Method.LangevinGamma = LangevinGamma
     Sys.TempSet = TempSet
-    sim.system.init.velocities.Canonical(Sys, Temp = TempSet)
     
     if DEBUG: print Sys.ForceField.ParamString()
     return Sys
 
     
-def runSrel(Sys, ParamString = None):
+def runSrel(Sys):
     # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
     Map = sim.atommap.PosMap()
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
@@ -225,6 +227,74 @@ def runSrel(Sys, ParamString = None):
        
     print "Srel minimization for different cases finished"
     del Opt
+
+
+def runMultiSrel(ParamString = None):
+	global LammpsTraj
+	if not MultiLammpsTraj:
+		raise TypeError('Need multiple AA trajectories')
+	
+	Opts = []
+	for Traj in MultiLammpsTraj:
+		LammpsTraj = Traj
+		Sys = makeSys()
+		Map = sim.atommap.PosMap()
+		for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
+    	Trj = pickleTraj(LammpsTraj, Verbose = False)
+    	Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
+    	sim.srel.optimizetraj.PlotFmt = 'svg'
+    	Opt.StepsMin = MinSteps
+    	Opts.append(Opt)
+	
+	del Opt
+	Weights = [1]*len(Opts) #TODO
+	MultiOpt = sim.srel.OptimizeMultiTrajClass(OptimizeTrajList = Opts, Weights = Weights, 
+											   FilePrefix = Prefix + '_multi')
+
+	# freeze all potentials
+    [P.FreezeParam() for P in Sys.ForceField]
+    
+    # relative entropy minimization
+    Opt_cases = ["SP", "SPLD_BB", "SPLD_BW", "SPLD_all"]
+    for i, case in enumerate(Opt_cases):
+        MultiOpt.Reset()
+        MultiOpt.FilePrefix = Prefix + '_multi_' + case
+        print "\n\nOptimizing for the case: ", case
+        
+        if case == "SP":
+            for P in Sys.ForceField:
+                if ['SP_WW', 'SP_BB', 'SP_BW'].__contains__(P.Name): P.UnfreezeParam()
+        
+        if case == "SPLD_BB":
+            for P in Sys.ForceField:
+                if P.Name == 'LD_BB': P.UnfreezeParam()
+                
+        if case == 'SPLD_BW':
+            for P in Sys.ForceField:
+                if P.Name == 'LD_BB':
+                    P.SetParam(Knots = 0.)
+                    P.FreezeParam()
+                if P.Name == 'LD_BW': P.UnfreezeParam()
+        
+        if case == "SPLD_all":
+            for P in Sys.ForceField:
+                P.UnfreezeParam()
+                if P.Name == 'LD_BB':
+                    if os.path.isfile(Prefix+'_SPLD_BB_sum.txt'):
+                        x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
+                        P.SetParam(Knots = x)
+                
+                if P.Name == 'LD_BW':
+                    if os.path.isfile(Prefix+'_SPLD_BW_sum.txt'):
+                        x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
+                        P.SetParam(Knots = x)
+                
+        # add more cases here if required
+        
+        Sys.ForceField.Update()
+        MultiOpt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
+        print "Multi Srel minimization for different cases finished"
+    	del MultiOpt
 
 
 def runCGMD(Sys):
