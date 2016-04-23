@@ -6,7 +6,7 @@ import sim, pickleTraj
 
 DelTempFiles = True
 
-## VMD tcl script
+## VMD tcl script (selects only C,H atoms from benzene and O atoms from water)
 tclscript = '''
 mol new %(gro)s
 mol addfile %(xtc)s waitfor all
