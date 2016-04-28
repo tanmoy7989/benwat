@@ -2,7 +2,11 @@
 
 import os, sys
 import numpy as np
+
+sys.path.append(os.path.expanduser('~/benwat'))
+import mysim
 import sim
+
 import pickleTraj
 import parse_potential as pp
 
@@ -53,7 +57,7 @@ Name_W = 'W' ; Name_B = 'B'
 Mass_W = 18.01 ; Mass_B = 78.11
 Dia_W = 2.8 ; Dia_B = 5.3
 SPCutScale = 2.5
-RhoMin = 0 ; RhoMax = 50 ; LD_Delta = 0.5
+RhoMin = 0 ; RhoMax = 50 ; LD_Delta = 1.2
 NSPKnots = 40 ; NLDKnots = 50
 
 
@@ -80,9 +84,9 @@ def SetSPCutoff():
     
 
 def makeSys():
-	global NB, NW, LDCutBB, LDCutBW, LDCutWB
-	global LammpsTraj
-    
+    global NB, NW, LDCutBB, LDCutBW, LDCutWB
+    global LammpsTraj
+
     # system chemistry
     AtomTypeW = sim.chem.AtomType(Name_W, Mass = Mass_W, Charge = 0.0, Color = (0,0,1))
     AtomTypeB = sim.chem.AtomType(Name_B, Mass = Mass_B, Charge = 0.0, Color = (1,1,0))
@@ -171,7 +175,7 @@ def makeSys():
     
 def runSrel(Sys):
     global NB, NW, LDCutBB, LDCutBW, LDCutWB
-	global LammpsTraj
+    global LammpsTraj
     
     # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
     Map = sim.atommap.PosMap()
@@ -242,11 +246,11 @@ def runSrel(Sys):
 
 
 def runMultiSrel():
-	global NB, NW, LDCutBB, LDCutBW, LDCutWB
-	global LammpsTraj
-	
-	if not MultiLammpsTraj or not MultiNBList or MultiNWList:
-		raise TypeError('Need multiple AA trajectories')
+    global NB, NW, LDCutBB, LDCutBW, LDCutWB
+    global LammpsTraj
+
+    if not MultiLammpsTraj or not MultiNBList or MultiNWList:
+        raise TypeError('Need multiple AA trajectories')
 	
 	Opts = []
 	for i, Traj in enumerate(MultiLammpsTraj):
@@ -268,9 +272,9 @@ def runMultiSrel():
 											   FilePrefix = Prefix + '_multi')
 
 	MultiOpt.StepsMin = MinSteps
-	
-	# freeze all potentials
-    [P.FreezeParam() for P in Sys.ForceField]
+    
+    # freeze all potentials
+    for P in Sys.ForceField: P.FreezeParam()
     
     # relative entropy minimization
     Opt_cases = ["SP", "SPLD_BB", "SPLD_BW", "SPLD_all"]

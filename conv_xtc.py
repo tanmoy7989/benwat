@@ -1,5 +1,7 @@
 #usr/bin/env python
 
+import mysim
+
 import os, sys
 import numpy as np
 import sim, pickleTraj
@@ -46,7 +48,7 @@ MassList_B = [12.011, 1.008] * 6
 for i in range(0, NB):  Map += [sim.atommap.AtomMap(Atoms1 = range(i*12, (i+1)*12), Atom2 = i, Mass1 = MassList_B)]
 for i in range(0, NW):  Map += [sim.atommap.AtomMap(Atoms1 = NB*12 + i, Atom2 = NB+i)]
 AtomTypes = [1]*NB + [2]*NW
-MappedTrj = sim.traj.Mapped(Trj, Map, AtomNames = AtomTypes)
+MappedTrj = sim.traj.Mapped(Trj, Map, AtomNames = AtomTypes, BoxL = BoxL)
 sim.traj.Convert(MappedTrj, sim.traj.LammpsWrite, LammpsTrjOut, Verbose = True)            
 
 # pickle final traj
