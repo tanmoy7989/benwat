@@ -3,7 +3,7 @@ import os, sys
 import numpy as np
 
 
-DelTempFiles = True
+DelTempFiles = False
 
 # constants
 N_A = 6.023e23

@@ -14,7 +14,7 @@ doMinimize = False
 DEBUG = True
 
 ############################ INPUTS ############################################
-global NB, NW, LDCutBB, LDCutBW, LDCutWB
+global NB, NW, LDCutBB, LDCutBW, LDCutWB. LDCutWW
 global LammpsTraj
 
 # system description
@@ -25,6 +25,7 @@ BoxL = None
 LDCutBB = None
 LDCutBW = None
 LDCutWB = None
+LDCutWW = None
 ParamString = None
 
 # MD settings
@@ -84,7 +85,7 @@ def SetSPCutoff():
     
 
 def makeSys():
-    global NB, NW, LDCutBB, LDCutBW, LDCutWB
+    global NB, NW, LDCutBB, LDCutBW, LDCutWB, LDCutWW
     global LammpsTraj
 
     # system chemistry
@@ -110,6 +111,7 @@ def makeSys():
     FilterBW_ordered = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeW], Ordered = True)
     FilterWB_ordered = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeB], Ordered = True)
     FilterBB_ordered = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeB], Ordered = True)
+    FilterWW_ordered = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeW], Ordered = True)
             
     # potential energy objects (only BB spline if dry benzene)
     SP_BB = None ; SP_WW = None; SP_BW = None
@@ -130,10 +132,14 @@ def makeSys():
         
         if LDCutBB:
             LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutBB - LD_Delta, NKnot = NLDKnots, 
-                       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)                  
+                       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)
+
+        if LDCutWW:
+        	LD_WW = LD(Sys, Cut = LDCutWW, LowerCut = LDCutWW - LD_Delta, NKnot = NLDKnots,
+        		       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WW", Filter = FilterWW_ordered)                 
     
     # system forcefield
-    for P in [SP_BB, SP_WW, SP_BW, LD_BB, LD_BW, LD_WB]:
+    for P in [SP_BB, SP_WW, SP_BW, LD_BB, LD_BW, LD_WB, LD_WW]:
         if P: Sys.ForceField.extend([P])
       
     # set up the histograms, must be done for Srel to work properly
@@ -174,7 +180,7 @@ def makeSys():
 
     
 def runSrel(Sys):
-    global NB, NW, LDCutBB, LDCutBW, LDCutWB
+    global NB, NW, LDCutBB, LDCutBW, LDCutWB, LDCutWW
     global LammpsTraj
     
     # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
@@ -201,8 +207,16 @@ def runSrel(Sys):
     # freeze all potentials
     [P.FreezeParam() for P in Sys.ForceField]
     
+    # create separate lists for pair and local density potentials
+    SPList = []
+    LDList = []
+    for P in Sys.ForceField:
+    	if P.Name.__contains__('SP'): SPList.append(P)
+    	if P.Name.__contains__('LD'): LDList.append(P)
+
+
     # relative entropy minimization
-    Opt_cases = ["SP", "SPLD_BB", "SPLD_BW", "SPLD_all"]
+    Opt_cases = ["SP", "SPLD_BB", "SPLD_WW", "SPLD_BW", "SPLD_WB", "SPLD_BB_WW", "SPLD_BB_BW", "SPLD_BB_WB", "SPLD_WW_BW", "SPLD_WW_WB", "SPLD_BB_WW_BW", "SPLD_BB_WW_WB"]
     for i, case in enumerate(Opt_cases):
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + case
@@ -210,33 +224,180 @@ def runSrel(Sys):
         
         if case == "SP":
             for P in Sys.ForceField:
-                if ['SP_WW', 'SP_BB', 'SP_BW'].__contains__(P.Name): P.UnfreezeParam()
+            	if SPList.__contains__(P):
+            		P.UnfreezeParam()
+            	else:
+            		P.SetParam(Knots = 0.)
+            		P.FreezeParam() 
+
         
         if case == "SPLD_BB":
             for P in Sys.ForceField:
-                if P.Name == 'LD_BB': P.UnfreezeParam()
-                
-        if case == 'SPLD_BW':
+            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_BB'):
+            		P.SetParam(Knots = 0.)
+            		P.FreezeParam()
+
+            	if P.Name == 'LD_BB':
+            		P.UnfreezeParam()
+
+
+        if case == "SPLD_WW":
             for P in Sys.ForceField:
-                if P.Name == 'LD_BB':
-                    P.SetParam(Knots = 0.)
-                    P.FreezeParam()
-                if P.Name == 'LD_BW': P.UnfreezeParam()
+            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_WW'):
+            		P.SetParam(Knots = 0.)
+            		P.FreezeParam()
+
+            	if P.Name == 'LD_WW':
+            		P.UnfreezeParam()
+
+
+		if case == "SPLD_BW":
+            for P in Sys.ForceField:
+            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_BW'):
+            		P.SetParam(Knots = 0.)
+            		P.FreezeParam()
+
+            	if P.Name == 'LD_BW':
+            		P.UnfreezeParam()
+
+
+		if case == "SPLD_WB":
+            for P in Sys.ForceField:
+            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_WB'):
+            		P.SetParam(Knots = 0.)
+            		P.FreezeParam()
+
+            	if P.Name == 'LD_WB':
+            		P.UnfreezeParam()
+
+
+        if case == "SPLD_BB_WW":
+        	for P in Sys.ForceField:
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WW'].__contains__(P.Name)):
+        			P.SetParam(Knots = 0.)
+        			P.FreezeParam()
+
+        		if P.Name == 'LD_BB':
+        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+                
+        		if P.Name == 'LD_WW':
+        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+
+
+        if case == "SPLD_BB_BW":
+        	for P in Sys.ForceField:
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_BW'].__contains__(P.Name)):
+        			P.SetParam(Knots = 0.)
+        			P.FreezeParam()
+
+        		if P.Name == 'LD_BB':
+        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+                
+        		if P.Name == 'LD_BW':
+        			x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
         
-        if case == "SPLD_all":
-            for P in Sys.ForceField:
-                P.UnfreezeParam()
-                if P.Name == 'LD_BB':
-                    if os.path.isfile(Prefix+'_SPLD_BB_sum.txt'):
-                        x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
-                        P.SetParam(Knots = x)
+
+        if case == "SPLD_BB_WB":
+        	for P in Sys.ForceField:
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WB'].__contains__(P.Name)):
+        			P.SetParam(Knots = 0.)
+        			P.FreezeParam()
+
+        		if P.Name == 'LD_BB':
+        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
                 
-                if P.Name == 'LD_BW':
-                    if os.path.isfile(Prefix+'_SPLD_BW_sum.txt'):
-                        x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
-                        P.SetParam(Knots = x)
+        		if P.Name == 'LD_WB':
+        			x = pp.parseLog(Prefix+'_SPLD_WB_sum.txt')['LD_WB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+
+
+        if case == "SPLD_WW_BW":
+        	for P in Sys.ForceField:
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_WW', 'LD_BW'].__contains__(P.Name)):
+        			P.SetParam(Knots = 0.)
+        			P.FreezeParam()
+
+        		if P.Name == 'LD_WW':
+        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
                 
-        # add more cases here if required
+        		if P.Name == 'LD_BW':
+        			x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+
+
+        if case == "SPLD_WW_WB":
+        	for P in Sys.ForceField:
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_WW', 'LD_WB'].__contains__(P.Name)):
+        			P.SetParam(Knots = 0.)
+        			P.FreezeParam()
+
+        		if P.Name == 'LD_WW':
+        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+                
+        		if P.Name == 'LD_WB':
+        			x = pp.parseLog(Prefix+'_SPLD_WB_sum.txt')['LD_WB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+
+
+        if case == "SPLD_BB_WW_BW":
+        	for P in Sys.ForceField:
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WW', 'LD_BW'].__contains__(P.Name)):
+        			P.SetParam(Knots = 0.)
+        			P.FreezeParam()
+
+        		if P.Name == 'LD_BB':
+        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+                
+        		if P.Name == 'LD_WW':
+        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+        			
+        		if P.Name == 'LD_BW':
+        			x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+
+
+        if case == "SPLD_BB_WW_WB":
+        	for P in Sys.ForceField:
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WW', 'LD_WB'].__contains__(P.Name)):
+        			P.SetParam(Knots = 0.)
+        			P.FreezeParam()
+
+        		if P.Name == 'LD_BB':
+        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+                
+        		if P.Name == 'LD_WW':
+        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
+
+        		if P.Name == 'LD_WB':
+        			x = pp.parseLog(Prefix+'_SPLD_WB_sum.txt')['LD_WB'][1]
+        			P.SetParam(Knots = x)
+        			P.UnfreezeParam()
         
         Sys.ForceField.Update()
         Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
