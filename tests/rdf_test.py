@@ -9,20 +9,19 @@ import sim
 from selLDCut import structcorr as rdf
 
 rdf.Normalize = True
-rdf.MeasureFreq = 10
+rdf.MeasureFreq = 50
 rdf.Normalize = True
-rdf.Nbins = 100
-rdf.AtomNames2Types = True
-rdf.LammpsTraj = os.path.expanduser('~/benwat/data/gromacs/NB250NW250/NB250NW250_prod.lammpstrj.gz')
-rdf.Prefix = 'NB250'
+rdf.Nbins = 50
+rdf.AtomNames2Types = True																																																																																																																																																																																																																																																																																																																																																																																																																																								
+rdf.LammpsTraj = os.path.expanduser('~/benwat/data/gromacs/NB250test/NB250NW250_prod.lammpstrj.gz')
+rdf.Prefix = 'NB250_CG_BB'
 
-rdf.calcErrorBar = True
-rdf.NBlocks = 5
+rdf.calcErrorBar = False
 
 rdf.genFileNames()
-rdf.makeRDF([1], [2])
+rdf.makeRDF([1], [1])
 
-r,g,e  = pickle.load(open(rdf.rdfpickle, 'r'))
+r,g,e,a  = pickle.load(open(rdf.rdfpickle, 'r'))
 plt.errorbar(r,g, yerr = e)
 plt.show()
 
