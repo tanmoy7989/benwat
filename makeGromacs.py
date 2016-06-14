@@ -3,7 +3,7 @@ import os, sys
 import numpy as np
 
 
-DelTempFiles = False
+DelTempFiles = True
 
 # constants
 N_A = 6.023e23
@@ -286,14 +286,14 @@ nsteps = %(nptsteps)d
 
 ;temp-coupling params (nose-hoover used in Nico's paper)
 nsttcouple = -1
-tcoupl = v-rescale
+tcoupl = nose-hoover
 tc-grps = Protein Non-Protein
 tau-t = 0.5 0.5
 ref-t = %(TempSet)g %(TempSet)g
 
 ;press-coupling params (Parrinello-Rahman used in Nico's paper)
 nstpcouple = -1
-pcoupl = berendsen
+pcoupl = Parrinello-Rahman
 pcoupltype = isotropic
 tau-p = 3.0 3.0
 ref-p = %(PressSet)g %(PressSet)g
@@ -429,8 +429,8 @@ def doNPT(paramdict = None):
     s = (npt_mdp + common_params) % paramdict
     file('%(Prefix)s_npt.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
-grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim1.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr
-mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
+grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim1.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr -maxwarn 100
+mdrun -nt %(Ncores)d -npme -1 -dlb no -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
 ''' % paramdict
     
     os.system(cmdstring)
