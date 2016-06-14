@@ -11,10 +11,10 @@ import pickleTraj
 import parse_potential as pp
 
 doMinimize = False
-DEBUG = True
+DEBUG = False
 
 ############################ INPUTS ############################################
-global NB, NW, LDCutBB, LDCutBW, LDCutWB. LDCutWW
+global NB, NW, LDCutBB, LDCutBW, LDCutWB, LDCutWW
 global LammpsTraj
 
 # system description
@@ -48,7 +48,7 @@ MultiNWList = []
 # Lammps settings
 sim.export.lammps.LammpsExec = '/home/cask0/home/tsanyal/software/tanmoy_lammps/lammps-15May15/src/lmp_ZIN'
 sim.export.lammps.InnerCutoff = 0.02
-sim.srel.base.ErrorDiffEneFracTol = 1.0 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run 
+sim.srel.base.ErrorDiffEneFracTol = 0.2 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run 
 
 ################################################################################
 																				
@@ -115,7 +115,7 @@ def makeSys():
             
     # potential energy objects (only BB spline if dry benzene)
     SP_BB = None ; SP_WW = None; SP_BW = None
-    LD_BW = None; LD_WB = None ; LD_BB = None
+    LD_BB = None; LD_WW = None; LD_BW = None; LD_WB = None 
     SP = sim.potential.PairSpline
     LD = sim.potential.LocalDensity
     SP_BB = SP(Sys, Cut = SPCutBB, NKnot = NSPKnots, Filter = FilterBB, Label = "SP_BB")
@@ -179,7 +179,7 @@ def makeSys():
     return Sys
 
     
-def runSrel(Sys):
+def runSrel(Sys, Opt_cases = None):
     global NB, NW, LDCutBB, LDCutBW, LDCutWB, LDCutWW
     global LammpsTraj
     
@@ -216,7 +216,7 @@ def runSrel(Sys):
 
 
     # relative entropy minimization
-    Opt_cases = ["SP", "SPLD_BB", "SPLD_WW", "SPLD_BW", "SPLD_WB", "SPLD_BB_WW", "SPLD_BB_BW", "SPLD_BB_WB", "SPLD_WW_BW", "SPLD_WW_WB", "SPLD_BB_WW_BW", "SPLD_BB_WW_WB"]
+    if not Opt_cases: Opt_cases = ["SP", "SPLD_BB", "SPLD_WW", "SPLD_BW", "SPLD_WB", "SPLD_BB_WW", "SPLD_BB_BW", "SPLD_BB_WB", "SPLD_WW_BW", "SPLD_WW_WB", "SPLD_BB_WW_BW", "SPLD_BB_WW_WB"]
     for i, case in enumerate(Opt_cases):
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + case
@@ -229,177 +229,81 @@ def runSrel(Sys):
             	else:
             		P.SetParam(Knots = 0.)
             		P.FreezeParam() 
-
-        
-        if case == "SPLD_BB":
-            for P in Sys.ForceField:
-            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_BB'):
-            		P.SetParam(Knots = 0.)
-            		P.FreezeParam()
-
-            	if P.Name == 'LD_BB':
-            		P.UnfreezeParam()
-
-
-        if case == "SPLD_WW":
-            for P in Sys.ForceField:
-            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_WW'):
-            		P.SetParam(Knots = 0.)
-            		P.FreezeParam()
-
-            	if P.Name == 'LD_WW':
-            		P.UnfreezeParam()
-
-
-		if case == "SPLD_BW":
-            for P in Sys.ForceField:
-            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_BW'):
-            		P.SetParam(Knots = 0.)
-            		P.FreezeParam()
-
-            	if P.Name == 'LD_BW':
-            		P.UnfreezeParam()
-
-
-		if case == "SPLD_WB":
-            for P in Sys.ForceField:
-            	if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != 'LD_WB'):
-            		P.SetParam(Knots = 0.)
-            		P.FreezeParam()
-
-            	if P.Name == 'LD_WB':
-            		P.UnfreezeParam()
-
-
-        if case == "SPLD_BB_WW":
-        	for P in Sys.ForceField:
-        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WW'].__contains__(P.Name)):
-        			P.SetParam(Knots = 0.)
-        			P.FreezeParam()
-
-        		if P.Name == 'LD_BB':
-        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-                
-        		if P.Name == 'LD_WW':
-        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-
-
-        if case == "SPLD_BB_BW":
-        	for P in Sys.ForceField:
-        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_BW'].__contains__(P.Name)):
-        			P.SetParam(Knots = 0.)
-        			P.FreezeParam()
-
-        		if P.Name == 'LD_BB':
-        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-                
-        		if P.Name == 'LD_BW':
-        			x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
         
 
-        if case == "SPLD_BB_WB":
+        if not LDList: print "No LD potentials present."
+
+        
+        if ["SPLD_BB", "SPLD_WW", "SPLD_BW", "SPLD_WB"].__contains__(case):
+        	ptype = case[2:]
         	for P in Sys.ForceField:
-        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WB'].__contains__(P.Name)):
+        		if SPList.__contains__(P):
+        			P.UnfreezeParam()
+        			if os.path.isfile('%s_SP_sum.txt' % Prefix):
+        				SPKnots = pp.parseParam(sumfile = '%s_SP_sum.txt' % Prefix, ptype = P.Name)['Knots']
+        				P.SetParam(Knots = SPKnots)
+
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (P.Name != ptype):
         			P.SetParam(Knots = 0.)
         			P.FreezeParam()
 
-        		if P.Name == 'LD_BB':
-        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-                
-        		if P.Name == 'LD_WB':
-        			x = pp.parseLog(Prefix+'_SPLD_WB_sum.txt')['LD_WB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
+        		if P.Name == ptype: P.UnfreezeParam()
 
-
-        if case == "SPLD_WW_BW":
+        
+        if ["SPLD_BB_WW", "SPLD_BB_BW", "SPLD_BB_WB", "SPLD_WW_BW", "SPLD_WW_WB"].__contains__(case):
+        	ptype1 = 'LD_' + case.split('_')[1]
+        	ptype2 = 'LD_' + case.split('_')[-1]
         	for P in Sys.ForceField:
-        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_WW', 'LD_BW'].__contains__(P.Name)):
+        		if SPList.__contains__(P):
+        			P.UnfreezeParam()
+        			if os.path.isfile('%s_SP_sum.txt' % Prefix):
+        				SPKnots = pp.parseParam(sumfile = '%s_SP_sum.txt' % Prefix, ptype = P.Name)['Knots']
+        				P.SetParam(Knots = SPKnots)
+
+        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not [ptype1, ptype2].__contains__(P.Name)):
         			P.SetParam(Knots = 0.)
         			P.FreezeParam()
 
-        		if P.Name == 'LD_WW':
-        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-                
-        		if P.Name == 'LD_BW':
-        			x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
+        		for ptype in [ptype1, ptype2]:
+        			if P.Name == ptype:
+        				P.UnfreezeParam()
+        				if os.path.isfile('%s_SP%s_sum.txt' % (Prefix, ptype)):
+        					LDKnots = pp.parseParam(sumfile = '%s_SP%s_sum.txt' % (Prefix, ptype), ptype = ptype)['Knots']
+        					P.SetParam(Knots = LDKnots)
 
+        
+        if ["SPLD_BB_WW_BW", "SPLD_BB_WW_WB"].__contains__(case):
+            ptype1 = 'LD_' + case.split('_')[1]
+            ptype2 = 'LD_' + case.split('_')[2]
+            ptype3 = 'LD_' + case.split('_')[3]
+            for P in Sys.ForceField:
+                if SPList.__contains__(P):
+                    P.UnfreezeParam()
+                    if os.path.isfile('%s_SP_sum.txt' % Prefix):
+                        SPKnots = pp.parseParam(sumfile = '%s_SP_sum.txt' % Prefix, ptype = P.Name)['Knots']
+                        P.SetParam(Knots = SPKnots)
 
-        if case == "SPLD_WW_WB":
-        	for P in Sys.ForceField:
-        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_WW', 'LD_WB'].__contains__(P.Name)):
-        			P.SetParam(Knots = 0.)
-        			P.FreezeParam()
+                if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not [ptype1, ptype2, ptype3].__contains__(P.Name)):
+                    P.SetParam(Knots = 0.)
+                    P.FreezeParam()
 
-        		if P.Name == 'LD_WW':
-        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-                
-        		if P.Name == 'LD_WB':
-        			x = pp.parseLog(Prefix+'_SPLD_WB_sum.txt')['LD_WB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-
-
-        if case == "SPLD_BB_WW_BW":
-        	for P in Sys.ForceField:
-        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WW', 'LD_BW'].__contains__(P.Name)):
-        			P.SetParam(Knots = 0.)
-        			P.FreezeParam()
-
-        		if P.Name == 'LD_BB':
-        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-                
-        		if P.Name == 'LD_WW':
-        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-        			
-        		if P.Name == 'LD_BW':
-        			x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-
-
-        if case == "SPLD_BB_WW_WB":
-        	for P in Sys.ForceField:
-        		if (not SPList.__contains__(P)) and (LDList.__contains__(P)) and (not ['LD_BB', 'LD_WW', 'LD_WB'].__contains__(P.Name)):
-        			P.SetParam(Knots = 0.)
-        			P.FreezeParam()
-
-        		if P.Name == 'LD_BB':
-        			x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-                
-        		if P.Name == 'LD_WW':
-        			x = pp.parseLog(Prefix+'_SPLD_WW_sum.txt')['LD_WW'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
-
-        		if P.Name == 'LD_WB':
-        			x = pp.parseLog(Prefix+'_SPLD_WB_sum.txt')['LD_WB'][1]
-        			P.SetParam(Knots = x)
-        			P.UnfreezeParam()
+                for ptype in [ptype1, ptype2, ptype3]:
+                    if P.Name == ptype:
+                        P.UnfreezeParam()
+                        if os.path.isfile('%s_SP%s_sum.txt' % (Prefix, ptype)):
+                            LDKnots = pp.parseParam(sumfile = '%s_SP%s_sum.txt' % (Prefix, ptype), ptype = ptype)['Knots']
+                            P.SetParam(Knots = LDKnots)
         
         Sys.ForceField.Update()
+
+        if DEBUG:
+            print Sys.ForceField.ParamString()
+            for P in Sys.ForceField:
+                count = 0
+                for param in P.Param.Fixed:
+                    if param: count += 1
+                if count == len(P.Knots): print '\n%s Frozen' % P.Name
+
         Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
        
     print "Srel minimization for different cases finished"
