@@ -11,11 +11,14 @@ DelTempFiles = True
 srcDir = os.path.expanduser('~/benwat/data/Christine_Peter_data/AA_reftraj')
 tarDir = os.path.expanduser('~/benwat/data/gromacs')
 reftable = np.loadtxt(os.path.join(srcDir, 'table.txt'))
+curr_dir = os.getcwd()
 
 
 ## VMD tcl script
 tclscript = '''
-mol new %(xyz)s waitfor all
+mol addfile %(xyz)s waitfor all
+package require pbctools
+pbc set {%(boxl)g %(boxl)g %(boxl)g} -all
 animate write lammpstrj %(lammpstrj)s waitfor all
 quit
 '''
@@ -29,25 +32,27 @@ for i in range(len(reftable)):
 		BoxL = reftable[i,3]
 
 # parse filenames
-zipTrj = os.path.join(srcDir, 'conc_%s' % conc, 'CG_trajectory_%s.xyz.bz2' % conc)
-unzipTrj = os.path.join(tarDir, 'NB%dNW%d' % (NB,NW), 'CG_trajectory_%s.xyz' % conc)
+xyzTrj_original = os.path.join(srcDir, 'conc_%s' % conc, 'CG_trajectory_%s.xyz' % conc)
+xyzTrj = os.path.join(tarDir, 'NB%dNW%d' % (NB,NW), 'CG_trajectory_%s.xyz' % conc)
 LammpsTrj = os.path.join(tarDir, 'NB%dNW%d' % (NB,NW), 'NB%dNW%d_prod.lammpstrj' % (NB, NW))
-TCLFile = os.path.join(tarDir, 'conv_xyz.tcl')
+TCLFile = os.path.join(tarDir, 'NB%dNW%d' % (NB, NW), 'conv_xyz.tcl')
 
-# unzip traj and copy it to required location
+# copy traj to required location and unzip it
 if not os.path.isdir(os.path.join(tarDir, 'NB%dNW%d' % (NB, NW))): os.mkdir(os.path.join(tarDir, 'NB%dNW%d' % (NB, NW)))
-os.system('bunzip2 %s ; mv %s %s' % (zipTrj, zipTrj.split('.bz2')[0], unzipTrj))
+os.system('cp %s %s' % (xyzTrj_original, xyzTrj))
 
 # run vmd
 VMDExec = '/home/cask0/home/tsanyal/software/tanmoy_vmd/vmd'
-VMDParams = {'xyz' : unzipTrj, 'lammpstrj': LammpsTrj}
+VMDParams = {'xyz' : xyzTrj.split('/')[-1], 'lammpstrj': LammpsTrj.split('/')[-1], 'boxl': BoxL}
 file(TCLFile, 'w').write(tclscript % VMDParams)
+os.chdir(os.path.join(tarDir, 'NB%dNW%d' % (NB, NW)))
 os.system('%s -dispdev text -e %s' % (VMDExec, TCLFile))
 os.system('gzip %s' % LammpsTrj)
+os.chdir(curr_dir)
 
 # pickle final traj
 pickleTraj(LammpsTrj+'.gz', Verbose = True)
 
 
 if DelTempFiles: 
-	[os.remove(x) for x in [TCLFile, unzipTrj]]
+	[os.remove(x) for x in [TCLFile, xyzTrj]]
