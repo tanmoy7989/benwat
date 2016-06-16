@@ -14,14 +14,40 @@ import measurelib as lib
 sys.path.append('~/')
 from selLDCut import structcorr as sc
 
-# flags and other globals
-calcErrorBar = True ; NBlocks = 5
-MeasureFreq = 1
-Normalize = True
-AtomNames2Types = True
+# User supplied attributes
 Traj = None
 Prefix = 'Measure'
+MeasureFreq = 1
+
+# Flags
+calcErrorBar = True ; NBlocks = 5
+Normalize = True
+AtomNames2Types = True
 isMappedTrj = True
+
+# Global Traj headvars
+Trj = None
+BoxL = None
+AtomNames = None
+AtomTypes = None
+NB = None
+NW = None
+
+
+def __prepHeadVars():
+	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
+	Trj = pickleTraj(Traj)
+	BoxL = Trj.FrameData['BoxL']
+	AtomNames = Trj.AtomNames
+	if AtomNames2Types: AtomTypes = __AtomName2Type(AtomNames)
+	else: AtomTypes = Trj.AtomTypes
+	if isMappedTrj: 
+		NB = len(np.where(AtomTypes == 1)[0])
+		NW = len(np.where(AtomTypes == 2)[0])
+	else:
+		NB = len(np.where(AtomTypes < 13)[0])
+		NW = len(np.where(AtomTypes == 13)[0])
+
 
 def __isComputed(filename):
 	if os.path.isfile(filename): return True
@@ -33,13 +59,22 @@ def __AtomName2Type(AtomNames):
 	[AtomTypes.append(int(float(x))) for x in AtomNames]
 	return np.array(AtomTypes, np.int32)
 
-
+    
 def makeAllRDF():
+	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
+	__prepHeadVars()
+
 	if isMappedTrj:
 		rdfPairs = {'BB': ([1], [1]), 'BW': ([1], [2]), 'WW': ([2], [2])}
 	else:
 		rdfPairs = {'BB': (range(1,13), range(1,13)), 'BW': (range(1,13), [13]), 'WW': ([13], [13])}
 	
+	if not NW: 
+		rdfPairs.pop('BW'); rdfPairs.pop('WW')
+	
+	if not NB:
+		rdfPairs.pop('BW'); rdfPairs.pop('BB')
+
 	sc.LammpsTraj = Traj
 	sc.Nbins = 100
 	sc.TrjIter[2] = MeasureFreq
@@ -50,7 +85,7 @@ def makeAllRDF():
 	sc.calcErrorBar = calcErrorBar
 	sc.NBlocks = NBlocks
 	
-	for ext in ['BB', 'BW', 'WW']:
+	for ext in rdfPairs.keys():
 		print '\nCalculating rdf for %s\n\n' % ext
 		sc.Prefix = Prefix + '_%s' % ext
 		sc.genFileNames()
@@ -59,9 +94,18 @@ def makeAllRDF():
 
 
 def makeAllLD(LDCuts, LDDelta = 0.5):
+	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
+	__prepHeadVars()
+
 	LDPairs = {'BB': (1,1), 'BW' : (1,2), 'WB': (2,1), 'WW' : (2,2)}
 	if not type(LDCuts) is dict:
 		raise TypeError("LDCuts must be a dict of the form {'BB': <>, 'BW': <>, 'WB': <>, 'WW': <>}")
+
+	if not NW: 
+		LDPairs.pop('BW'); LDPairs.pop('WW'); LDPairs.pop('WB')
+	
+	if not NB:
+		LDPairs.pop('BW'); LDPairs.pop('BB'); LDPairs.pop('WB')
 
 	sc.LammpsTraj = Traj
 	sc.Nbins = 100
@@ -73,7 +117,7 @@ def makeAllLD(LDCuts, LDDelta = 0.5):
 	sc.calcErrorBar = calcErrorBar
 	sc.NBlocks = NBlocks
 
-	for ext in ['BB', 'BW', 'WB', 'WW']:
+	for ext in LDPairs.keys():
 		sc.LDCut = LDCuts[ext]
 		sc.Prefix = Prefix + '_%s' % ext
 		sc.genFileNames()
@@ -82,16 +126,15 @@ def makeAllLD(LDCuts, LDDelta = 0.5):
 
 
 def makeCluster(Cut = None, ClustAtomType = 1):
+	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
+	__prepHeadVars()
+
 	PickleName = Prefix + '.pickle'
 	if __isComputed(PickleName): return
 
-	Trj = pickleTraj(Traj)
 	FrameRange = range(0, len(Trj), MeasureFreq)
 	NFrames = len(FrameRange)
-	BoxL = Trj.FrameData['BoxL']
 
-	AtomNames = Trj.AtomNames
-	if AtomNames2Types: Trj.AtomTypes = __AtomName2Type(Trj.AtomNames)
 	Inds = np.where(Trj.AtomTypes == ClustAtomType)
 	NAtom = len(Inds)
 
@@ -131,12 +174,12 @@ def makeCluster(Cut = None, ClustAtomType = 1):
 
 
 def calcWaterCylinder():
+	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
+	__prepHeadVars()
+
 	pickleName = Prefix + '_water_cylinder.pickle'
 	if __isComputed(pickleName): return
 
-	Trj = pickleTraj(Traj)
-	BoxL = Trj.FrameData['BoxL']
-	AtomTypes = __AtomName2Type(Trj.AtomNames)
 	FrameRange = range(0, len(Trj), MeasureFreq)
 	NFrames = len(FrameRange)
 	
@@ -173,26 +216,29 @@ def calcWaterCylinder():
 
 
 def makeAllKBI(runAvg = True, delRDFPickle = True):
+	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
+	__prepHeadVars()
+
 	pickleName = Prefix + '_KBI.pickle'
 	if __isComputed(pickleName): return
 
-	Trj = pickleTraj(Traj)
-	BoxVol = np.prod(np.array(Trj.FrameData['BoxL']))
-	if AtomNames2Types: AtomTypes = __AtomName2Type(Trj.AtomNames)
-	else: AtomTypes = Trj.AtomTypes
-	NB = len(np.where(AtomTypes == 1)[0])
-	NW = len(np.where(AtomTypes == 2)[0])
+	BoxVol = np.prod(BoxL)
 	x_B = NB/(NB+NW)
 	x_W = 1-x_B
 
 	makeAllRDF()
 	
-	KBItypes = ['BB', 'WW', 'BW']
 	G = {'BB': (), 'WW': (), 'BW': ()}
 	Delta_N = copy.copy(G)
 	rho_bulk = {'B': NB/BoxVol, 'W': NW/BoxVol}
 	
-	for KBItype in KBItypes:
+	if not NW:
+		G.pop('BW'); G.pop('WW')
+
+	if not NB:
+		G.pop('BW'); G.pop('BB')
+
+	for KBItype in G.keys():
 		r,g,e,x = pickle.load(open('%s_%s_rdf.pickle' % (Prefix, KBItype), 'r'))
 		
 		R = r
