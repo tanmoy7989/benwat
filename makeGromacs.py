@@ -202,6 +202,7 @@ end structure
 structure water.pdb
   number %(NW)d
   resnumbers 2
+  centerofmass
   inside box -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g 
 end structure
 ''' 
@@ -287,7 +288,7 @@ nsteps = %(nptsteps)d
 ;temp-coupling params (nose-hoover used in Nico's paper)
 nsttcouple = -1
 tcoupl = nose-hoover
-tc-grps = Protein Non-Protein
+tc-grps = Protein SOL
 tau-t = 0.5 0.5
 ref-t = %(TempSet)g %(TempSet)g
 
@@ -368,16 +369,24 @@ continuation = yes
 gen_vel = no
 '''
 
+
+
 def makePrefix():
     Prefix = 'NB%dNW%d' % (NB, NW)
     return Prefix
 
+
+
 def makeBoxL(MolWt = Mass_W, rho = rho_W):
     #specific vol of species
     v = (MolWt/(rho*N_A)) * (1e-2 * 1e9)**3.
-    BoxVol = v * NW
+    if MolWt == Mass_W: Nmols = NW
+    else: Nmols = NB
+    BoxVol = v * NB
     BoxL = BoxVol**(1./3.) #boxlength based on packing of specific molecule (Water or benzene)
     return BoxL + 2.8      #2.8 nm is 2*cutoff sent by Christine 
+
+
 
 def makeParamDict(BoxL, Prefix = 'benwat'):
     d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'equilsteps': EQUILSTEPS, 'prodsteps': PRODSTEPS, 
@@ -386,8 +395,9 @@ def makeParamDict(BoxL, Prefix = 'benwat'):
          'TempSet': TempSet, 'PressSet': 1.0, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
 
     return d
-    
-    
+
+
+        
 def makeData(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     file('benzene.gro', 'w').write(benzene_gro)
@@ -408,13 +418,34 @@ editconf -f %(Prefix)s.pdb -o %(Prefix)s.gro -bt cubic -box %(BoxL)g %(BoxL)g %(
         [os.remove(x) for x in filenames]
 
 
+
+def isPureLiq(paramdict = None):
+    flag = 0
+    if NB == 0 or NW == 0:
+        flag = 1
+        if os.path.isfile('%(Prefix)s.ndx' % paramdict): return flag
+        cmdstring = '''
+make_ndx -f %(Prefix)s_minim1.gro -o %(Prefix)s.ndx << EOF
+q
+''' % paramdict 
+        os.system(cmdstring)
+        s = file('%(Prefix)s.ndx' % paramdict).read()
+        str_replace = {NB == 0: '[ SOL ]', NW == 0: '[ Protein ]'}
+        str_add = {NB == 0: '\n[ Protein ]\n', NW == 0: '\n[ SOL ]\n'}
+        if s.startswith('[ System ]'): s = s.replace('[ System ]', str_replace[True], 1)
+        s += str_add[True]
+        file('%(Prefix)s.ndx' % paramdict, 'w').write(s)
+    return flag
+
+
+
 def doEneMin1(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s =(common_params + minim1_mdp) % paramdict
     file('%(Prefix)s_minim1.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_minim1.mdp -c %(Prefix)s.gro -p %(Prefix)s.top -o %(Prefix)s_minim1.tpr
-mdrun -ntmpi %(Ncores)d -npme 2 -dlb yes -deffnm %(Prefix)s_minim1
+mdrun -dlb no -deffnm %(Prefix)s_minim1
 ''' % paramdict
     
     os.system(cmdstring)
@@ -428,8 +459,10 @@ def doNPT(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s = (npt_mdp + common_params) % paramdict
     file('%(Prefix)s_npt.mdp' % paramdict, 'w').write(s)
+    if isPureLiq(paramdict): s_ndx = ' -n %(Prefix)s.ndx ' % paramdict
+    else: s_ndx = ' '
     cmdstring = '''
-grompp -f %(Prefix)s_npt.mdp -c %(Prefix)s_minim1.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr -maxwarn 100
+grompp''' + s_ndx +  '''-f %(Prefix)s_npt.mdp -c %(Prefix)s_minim1.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr -maxwarn 100
 mdrun -nt %(Ncores)d -npme -1 -dlb no -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
 ''' % paramdict
     
@@ -444,8 +477,10 @@ def doEquil1(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s = (common_params + equil1_mdp) % paramdict
     file('%(Prefix)s_equil1.mdp' % paramdict, 'w').write(s)
+    if isPureLiq(paramdict): s_ndx = ' -n %(Prefix)s.ndx ' % paramdict
+    else: s_ndx = ' '
     cmdstring = '''
-grompp -f %(Prefix)s_equil1.mdp -c %(Prefix)s_npt.gro -p %(Prefix)s.top -o %(Prefix)s_equil1.tpr -t %(Prefix)s_npt.cpt
+grompp''' + s_ndx + '''-f %(Prefix)s_equil1.mdp -c %(Prefix)s_npt.gro -p %(Prefix)s.top -o %(Prefix)s_equil1.tpr -t %(Prefix)s_npt.cpt
 mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil1
 ''' % paramdict
     
@@ -503,7 +538,7 @@ def doEneMin2(paramdict = None):
     file('%(Prefix)s_minim2.mdp' % paramdict, 'w').write(s)
     cmdstring = '''
 grompp -f %(Prefix)s_minim2.mdp -c %(Prefix)s_rescaled.gro -p %(Prefix)s.top -o %(Prefix)s_minim2.tpr
-mdrun -ntmpi %(Ncores)d -npme 2 -dlb yes -deffnm %(Prefix)s_minim2
+mdrun -dlb no -deffnm %(Prefix)s_minim2
 ''' % paramdict
     
     os.system(cmdstring)
@@ -517,8 +552,10 @@ def doEquil2(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s = (common_params + equil2_mdp) % paramdict
     file('%(Prefix)s_equil2.mdp' % paramdict, 'w').write(s)
+    if isPureLiq(paramdict): s_ndx = ' -n %(Prefix)s.ndx ' % paramdict
+    else: s_ndx = ' '
     cmdstring = '''
-grompp -f %(Prefix)s_equil2.mdp -c %(Prefix)s_minim2.gro -p %(Prefix)s.top -o %(Prefix)s_equil2.tpr
+grompp''' + s_ndx + '''-f %(Prefix)s_equil2.mdp -c %(Prefix)s_minim2.gro -p %(Prefix)s.top -o %(Prefix)s_equil2.tpr
 mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_equil2
 ''' % paramdict
     
@@ -533,8 +570,10 @@ def doProd(paramdict = None):
     if paramdict is None: raise TypeError('First populate param dict')
     s = (common_params + prod_mdp) % paramdict
     file('%(Prefix)s_prod.mdp' % paramdict, 'w').write(s)
+    if isPureLiq(paramdict): s_ndx = ' -n %(Prefix)s.ndx ' % paramdict
+    else: s_ndx = ' '
     cmdstring = '''
-grompp -f %(Prefix)s_prod.mdp -c %(Prefix)s_equil2.gro -p %(Prefix)s.top -o %(Prefix)s_prod.tpr -t %(Prefix)s_equil2.cpt
+grompp''' + s_ndx +  '''-f %(Prefix)s_prod.mdp -c %(Prefix)s_equil2.gro -p %(Prefix)s.top -o %(Prefix)s_prod.tpr -t %(Prefix)s_equil2.cpt
 mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_prod
 ''' % paramdict
     
