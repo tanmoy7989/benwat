@@ -21,7 +21,7 @@ global LammpsTraj
 NB = 250
 NW = 250
 Prefix = None
-BoxL = None
+BoxL = []
 LDCutBB = None
 LDCutBW = None
 LDCutWB = None
@@ -30,7 +30,7 @@ ParamString = None
 
 # MD settings
 MinSteps = 1000
-NPTSteps = 1000
+NPTSteps = 1000 
 EquilSteps = 1000000
 ProdSteps = 20000000
 StepFreq = 1000
@@ -41,6 +41,7 @@ CG_Thermostat = None
 LangevinGamma = 0.01
 
 # Multi Srel optimization settings
+doMultiSrel = False
 MultiLammpsTraj = []
 MultiNBList = []
 MultiNWList = []
@@ -85,7 +86,8 @@ def SetSPCutoff():
     
 
 def makeSys():
-    global NB, NW, LDCutBB, LDCutBW, LDCutWB, LDCutWW
+    global NB, NW
+    global LDCutBB, LDCutBW, LDCutWB, LDCutWW, BoxL
     global LammpsTraj
 
     # system chemistry
@@ -98,8 +100,13 @@ def makeSys():
     for i in range(NB): Sys += MolTypeB.New()
     for i in range(NW): Sys += MolTypeW.New()
     
-    # box length and cutoffs
-    Sys.BoxL[:] = BoxL
+    # box lengths
+    if doMultiSrel: BoxL = [100,100,100] # large dummy boxlength
+    else: 
+        if not BoxL: BoxL = pickleTraj(LammpsTraj).FrameData['BoxL']
+    Sys.BoxL = BoxL
+    
+    # cutoffs
     SPCutWW, SPCutBB, SPCutBW = SetSPCutoff()
     for cut in [SPCutWW, SPCutBB, SPCutBW, LDCutBW, LDCutBW]:
         if cut and isImageOverlap(cut): raise ValueError('Images are overlapping. Revise cutoffs')
@@ -180,16 +187,20 @@ def makeSys():
 
     
 def runSrel(Sys, Opt_cases = None):
-    global NB, NW, LDCutBB, LDCutBW, LDCutWB, LDCutWW
+    global NB, NW
+    global LDCutBB, LDCutBW, LDCutWB, LDCutWW, BoxL
     global LammpsTraj
-    
-    # make map (note: all AA trajectories are stored in mapped format and so 1:1 mapping here)
-    Map = sim.atommap.PosMap()
+
+    Sys = makeSys()
+    Map = sim.atommap.PosMap() # note all AA trajectories are in COM format
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
     
-    # optimizer class
-    Trj = pickleTraj(LammpsTraj, Verbose = False)
-    Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
+    if not doMultiSrel:
+    	Trj = pickleTraj(LammpsTraj, Verbose = False)
+    	Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
+    else:
+    	Opt = genMultiOpt(Sys, Map)
+    
     sim.srel.optimizetraj.PlotFmt = 'svg'
     Opt.StepsMin = MinSteps
 
@@ -310,23 +321,21 @@ def runSrel(Sys, Opt_cases = None):
     del Opt
 
 
-def runMultiSrel():
-    global NB, NW, LDCutBB, LDCutBW, LDCutWB
-    global LammpsTraj
-
-    if not MultiLammpsTraj or not MultiNBList or MultiNWList:
-        raise TypeError('Need multiple AA trajectories')
+def genMultiOpt(Sys, Map):
+	global BoxL, LammpsTraj
 	
+	if not MultiLammpsTraj or not MultiNBList or not MultiNWList:
+		raise IOError('Need more information to generate multi Opt object')
+
 	Opts = []
 	for i, Traj in enumerate(MultiLammpsTraj):
-		LammpsTraj = Traj
 		NB = MultiNBList[i]
 		NW = MultiNWList[i]
-		print 'Generating CG system for NB = %d, NW = %d from extended ensemble\n\n' % (NB, NW)
-		Sys = makeSys()
-		Map = sim.atommap.PosMap()
-		for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
+		print '\nGenerating CG system for NB = %d, NW = %d from extended ensemble\n' % (NB, NW)
+    	LammpsTraj = Traj
     	Trj = pickleTraj(LammpsTraj, Verbose = False)
+    	BoxL = pickleTraj(LammpsTraj).FrameData['BoxL']
+    	Sys.ScaleBox(BoxL)
     	Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
     	sim.srel.optimizetraj.PlotFmt = 'svg'
     	Opts.append(Opt)
@@ -336,56 +345,11 @@ def runMultiSrel():
 	MultiOpt = sim.srel.OptimizeMultiTrajClass(OptimizeTrajList = Opts, Weights = Weights, 
 											   FilePrefix = Prefix + '_multi')
 
-	MultiOpt.StepsMin = MinSteps
-    
-    # freeze all potentials
-    for P in Sys.ForceField: P.FreezeParam()
-    
-    # relative entropy minimization
-    Opt_cases = ["SP", "SPLD_BB", "SPLD_BW", "SPLD_all"]
-    for i, case in enumerate(Opt_cases):
-        MultiOpt.Reset()
-        MultiOpt.FilePrefix = Prefix + '_multi_' + case
-        print "\n\nOptimizing for the case: ", case
-        
-        if case == "SP":
-            for P in Sys.ForceField:
-                if ['SP_WW', 'SP_BB', 'SP_BW'].__contains__(P.Name): P.UnfreezeParam()
-        
-        if case == "SPLD_BB":
-            for P in Sys.ForceField:
-                if P.Name == 'LD_BB': P.UnfreezeParam()
-                
-        if case == 'SPLD_BW':
-            for P in Sys.ForceField:
-                if P.Name == 'LD_BB':
-                    P.SetParam(Knots = 0.)
-                    P.FreezeParam()
-                if P.Name == 'LD_BW': P.UnfreezeParam()
-        
-        if case == "SPLD_all":
-            for P in Sys.ForceField:
-                P.UnfreezeParam()
-                if P.Name == 'LD_BB':
-                    if os.path.isfile(Prefix+'_SPLD_BB_sum.txt'):
-                        x = pp.parseLog(Prefix+'_SPLD_BB_sum.txt')['LD_BB'][1]
-                        P.SetParam(Knots = x)
-                
-                if P.Name == 'LD_BW':
-                    if os.path.isfile(Prefix+'_SPLD_BW_sum.txt'):
-                        x = pp.parseLog(Prefix+'_SPLD_BW_sum.txt')['LD_BW'][1]
-                        P.SetParam(Knots = x)
-                
-        # add more cases here if required
-        
-        Sys.ForceField.Update()
-        MultiOpt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
-        print "Multi Srel minimization for different cases finished"
-    	del MultiOpt
+	return MultiOpt
 
 
-def runCGMD(Sys):
-    Sys.ForceField.SetParamString(ParamString)
+def runCGMD(Sys, forcefield):
+    pp.loadParam(Sys = Sys, sumfile = forcefield)
     # export to Lammps
     Trj, TrjFile = sim.export.lammps.MakeLammpsTraj(Sys = Sys, Prefix = Prefix, NStepsMin = MinSteps, 
                                                     NStepsEquil = EquilSteps, NStepsProd = ProdSteps, 

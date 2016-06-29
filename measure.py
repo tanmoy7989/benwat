@@ -37,7 +37,7 @@ NW = None
 def __prepHeadVars():
 	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
 	Trj = pickleTraj(Traj)
-	BoxL = Trj.FrameData['BoxL']
+	BoxL = np.array(Trj.FrameData['BoxL'])
 	AtomNames = Trj.AtomNames
 	if AtomNames2Types: AtomTypes = __AtomName2Type(AtomNames)
 	else: AtomTypes = Trj.AtomTypes
@@ -129,17 +129,17 @@ def makeCluster(Cut = None, ClustAtomType = 1):
 	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
 	__prepHeadVars()
 
-	PickleName = Prefix + '.pickle'
+	PickleName = Prefix + '_clust.pickle'
 	if __isComputed(PickleName): return
 
 	FrameRange = range(0, len(Trj), MeasureFreq)
 	NFrames = len(FrameRange)
 
-	Inds = np.where(Trj.AtomTypes == ClustAtomType)
-	NAtom = len(Inds)
+	Inds = np.where(AtomTypes == ClustAtomType)
+	NAtom = len(Inds[0])
 
-	bin_centers = range(1, NAtom+1)
-	bin_val_measure = np.zeros([NFrames, NAtom], np.float64)
+	bin_centers = range(0, NAtom+1)
+	bin_val_measure = np.zeros([NFrames, NAtom+1], np.float64)
 	bin_val_hist = np.zeros(NAtom)
 	err = None
 
@@ -155,7 +155,7 @@ def makeCluster(Cut = None, ClustAtomType = 1):
 	bin_val_hist = np.mean(bin_val_measure, axis = 0)
 	if Normalize: bin_val_hist /= np.sum(bin_val_hist)
 
-	if doBlockAvg:
+	if calcErrorBar:
 		print '\n\n'
 		err = np.zeros(NAtom)
 		bin_val_block = np.zeros([NBlocks, NAtom], np.float64)
@@ -170,7 +170,7 @@ def makeCluster(Cut = None, ClustAtomType = 1):
 
 		err = np.std(bin_val_block, axis = 0)	
 
-	pickle.dump((bin_val_measure, (bin_centers, bin_val_hist, err)), open(PickleName, 'w'))
+	pickle.dump( (bin_centers, bin_val_hist, err, bin_val_measure), open(PickleName, 'w'))
 
 
 def calcWaterCylinder():
