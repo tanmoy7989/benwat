@@ -39,6 +39,7 @@ StepFreq = 1000
 LammpsTraj = None
 CG_Thermostat = None
 LangevinGamma = 0.01
+isInit = False
 
 # Multi Srel optimization settings
 doMultiSrel = False
@@ -103,7 +104,7 @@ def makeSys():
     # box lengths
     if doMultiSrel: BoxL = [100,100,100] # large dummy boxlength
     else: 
-        if not BoxL: BoxL = pickleTraj(LammpsTraj).FrameData['BoxL']
+        if not BoxL.any(): BoxL = pickleTraj(LammpsTraj).FrameData['BoxL']
     Sys.BoxL = BoxL
     
     # cutoffs
@@ -209,12 +210,6 @@ def runSrel(Sys, Opt_cases = None):
         Opt.TempFilePrefix = 'logtest'
         Opt.TempFileDir = os.getcwd()
 
-    # output initial histograms if required
-    if DEBUG:
-        Opt.MakeModTraj(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
-        Opt.OutputModHistFile()
-        Opt.OutputPlot()
-
     # freeze all potentials
     [P.FreezeParam() for P in Sys.ForceField]
     
@@ -224,6 +219,13 @@ def runSrel(Sys, Opt_cases = None):
     for P in Sys.ForceField:
     	if P.Name.__contains__('SP'): SPList.append(P)
     	if P.Name.__contains__('LD'): LDList.append(P)
+
+
+    def checkInit(Forcefield, ptypes):
+    	if not isInit: return
+    	for potential in Forcefield:
+    		if SPList.__contains__(potential): potential.FreezeParam()
+    		if LDList.__contains__(potential) and not ptypes.__contains__(potential.Name): potential.FreezeParam()
 
 
     # relative entropy minimization
@@ -242,9 +244,11 @@ def runSrel(Sys, Opt_cases = None):
             		P.FreezeParam() 
         
 
+
         if not LDList: print "No LD potentials present."
 
         
+
         if ["SPLD_BB", "SPLD_WW", "SPLD_BW", "SPLD_WB"].__contains__(case):
         	ptype = case[2:]
         	for P in Sys.ForceField:
@@ -260,7 +264,10 @@ def runSrel(Sys, Opt_cases = None):
 
         		if P.Name == ptype: P.UnfreezeParam()
 
+        		checkInit(Sys.ForceField, [ptype])
+
         
+
         if ["SPLD_BB_WW", "SPLD_BB_BW", "SPLD_BB_WB", "SPLD_WW_BW", "SPLD_WW_WB"].__contains__(case):
         	ptype1 = 'LD_' + case.split('_')[1]
         	ptype2 = 'LD_' + case.split('_')[-1]
@@ -282,7 +289,10 @@ def runSrel(Sys, Opt_cases = None):
         					LDKnots = pp.parseParam(sumfile = '%s_SP%s_sum.txt' % (Prefix, ptype), ptype = ptype)['Knots']
         					P.SetParam(Knots = LDKnots)
 
+        		checkInit(Sys.ForceField, [ptype1, ptype2])
         
+
+
         if ["SPLD_BB_WW_BW", "SPLD_BB_WW_WB"].__contains__(case):
             ptype1 = 'LD_' + case.split('_')[1]
             ptype2 = 'LD_' + case.split('_')[2]
@@ -304,6 +314,10 @@ def runSrel(Sys, Opt_cases = None):
                         if os.path.isfile('%s_SP%s_sum.txt' % (Prefix, ptype)):
                             LDKnots = pp.parseParam(sumfile = '%s_SP%s_sum.txt' % (Prefix, ptype), ptype = ptype)['Knots']
                             P.SetParam(Knots = LDKnots)
+
+                checkInit(Sys.ForceField, [ptype1, ptype2, ptype3])
+
+
         
         Sys.ForceField.Update()
 
