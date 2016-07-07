@@ -264,3 +264,44 @@ def makeAllKBI(runAvg = True, delRDFPickle = True):
 
 	output = (G, Delta_N, Delta_BW, dmudx_B, dgammadx_B)
 	pickle.dump(output, open(pickleName, 'w'))
+
+
+def makeLocalMolFrac(Cutoff = None):
+	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
+	__prepHeadVars()
+
+	pickleName = Prefix + '_locmolfrac.pickle'
+	if __isComputed(pickleName): return
+
+	FrameRange = range(0, len(Trj), MeasureFreq)
+	NFrames = len(FrameRange)
+	Nbins = 100
+
+	bin_centers = np.zeros(Nbins, np.float64)
+	bin_vals_measure = np.zeros([NFrames, NB+NW], np.float64)
+	bin_vals_hist = {'B': np.zeros(Nbins, np.float64), 'W': np.zeros(Nbins, np.float64)}
+
+	pb = sim.utility.ProgressBar(Text = 'Calculating local mole fractions...', Steps = NFrames)
+
+	for i, frame in enumerate(FrameRange):
+		Pos = Trj[frame]
+		bin_vals_measure[i, :] = lib.localmolfrac_frame(pos = Pos, atomtypes = AtomTypes, boxl = BoxL, cut = Cutoff)
+		pb.Update(i)
+
+	# generate the histograms
+	bin_delta = 1.02/Nbins
+	for i in range(Nbins): bin_centers[i] = (i+0.5) * bin_delta
+	for i, xB in enumerate(bin_vals_measure.flatten()):
+		indB = int(xB/bin_delta) ; indW = int((1-xB)/bin_delta)
+		bin_vals_hist['B'][indB] += 1.0 ; bin_vals_hist['W'][indW] += 1.0
+
+	for key in bin_vals_hist.keys():
+		bin_vals_hist[key] /= len(bin_vals_measure.flatten())
+		if Normalize: bin_vals_hist[key] /= np.trapz(x = bin_centers, y = bin_vals_hist[key], dx = bin_delta)
+
+	if calcErrorBar:
+		# TODO: calculate errorbars
+		pass
+
+	output = (bin_centers, bin_vals_hist, bin_vals_measure)
+	pickle.dump(output, open(pickleName, 'w'))
