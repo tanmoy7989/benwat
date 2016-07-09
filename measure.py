@@ -34,6 +34,7 @@ NB = None
 NW = None
 
 
+
 def __prepHeadVars():
 	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
 	Trj = pickleTraj(Traj)
@@ -215,7 +216,7 @@ def calcWaterCylinder():
 	print '\n\nMean cylinder radius = ', r
 
 
-def makeAllKBI(runAvg = True, delRDFPickle = True):
+def makeAllKBI(delRDFPickle = True):
 	global Trj, BoxL, AtomNames, AtomTypes, NB, NW
 	__prepHeadVars()
 
@@ -248,11 +249,7 @@ def makeAllKBI(runAvg = True, delRDFPickle = True):
 		for i, R_ in enumerate(R):
 			G[KBItype][i,0] = R_
 			x = np.array(r[:i]) ; y  = (4.*np.pi*r[:i]**2) * (g[:i]-1)
-			G[KBItype][i,1] = np.sum(y*x*dr)
-			# running avg between 1 and 1.4 nm to control oscillations (suggested by Pritam Ganguly)
-			if runAvg:
-				if R_ >= 12: G[KBItype][i,1] = np.mean(G[KBItype][i-5:i-1, 1])
-
+			G[KBItype][i,1] = np.trapz(y = y, x =x , dx = dr)
 			Delta_N[KBItype][i,0] = R_
 			Delta_N[KBItype][i,1] = rho_bulk[KBItype[-1]] * G[KBItype][i,1]
 
@@ -281,7 +278,7 @@ def makeLocalMolFrac(Cutoff = None):
 	bin_vals_measure = np.zeros([NFrames, NB+NW], np.float64)
 	bin_vals_hist = {'B': np.zeros(Nbins, np.float64), 'W': np.zeros(Nbins, np.float64)}
 
-	pb = sim.utility.ProgressBar(Text = 'Calculating local mole fractions...', Steps = NFrames)
+	pb = sim.utility.ProgressBar(Text = 'Calculating local mole fractions...', Steps = NFrames) 
 
 	for i, frame in enumerate(FrameRange):
 		Pos = Trj[frame]
