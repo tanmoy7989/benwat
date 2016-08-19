@@ -48,9 +48,9 @@ MultiNBList = []
 MultiNWList = []
 
 # Lammps settings
-sim.export.lammps.LammpsExec = '/home/cask0/home/tsanyal/software/tanmoy_lammps/lammps-15May15/src/lmp_ZIN'
+sim.export.lammps.LammpsExec = 'lmp_tsanyal'
 sim.export.lammps.InnerCutoff = 0.02
-sim.srel.base.ErrorDiffEneFracTol = 0.2 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run 
+sim.srel.base.ErrorDiffEneFracTol = 0.6 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run 
 
 ################################################################################
 																				
@@ -204,11 +204,6 @@ def runSrel(Sys, Opt_cases = None):
     
     sim.srel.optimizetraj.PlotFmt = 'svg'
     Opt.StepsMin = MinSteps
-
-    # Lammps log inconsistency debugging
-    if DEBUG:
-        Opt.TempFilePrefix = 'logtest'
-        Opt.TempFileDir = os.getcwd()
 
     # freeze all potentials
     [P.FreezeParam() for P in Sys.ForceField]
