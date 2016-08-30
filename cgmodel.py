@@ -61,7 +61,7 @@ Mass_W = 18.01 ; Mass_B = 78.11
 Dia_W = 2.8 ; Dia_B = 5.3
 SPCutScale = 2.5
 RhoMin = 0 ; RhoMax = 50 ; LD_Delta = 1.2
-NSPKnots = 40 ; NLDKnots = 50
+NSPKnots = 30 ; NLDKnots = 30
 
 
 def makeSysPrefix():
@@ -237,13 +237,9 @@ def runSrel(Sys, Opt_cases = None):
             	else:
             		P.SetParam(Knots = 0.)
             		P.FreezeParam() 
-        
-
 
         if not LDList: print "No LD potentials present."
-
         
-
         if ["SPLD_BB", "SPLD_WW", "SPLD_BW", "SPLD_WB"].__contains__(case):
         	ptype = case[2:]
         	for P in Sys.ForceField:
@@ -258,10 +254,7 @@ def runSrel(Sys, Opt_cases = None):
         			P.FreezeParam()
 
         		if P.Name == ptype: P.UnfreezeParam()
-
         		checkInit(Sys.ForceField, [ptype])
-
-        
 
         if ["SPLD_BB_WW", "SPLD_BB_BW", "SPLD_BB_WB", "SPLD_WW_BW", "SPLD_WW_WB"].__contains__(case):
         	ptype1 = 'LD_' + case.split('_')[1]
@@ -286,8 +279,6 @@ def runSrel(Sys, Opt_cases = None):
 
         		checkInit(Sys.ForceField, [ptype1, ptype2])
         
-
-
         if ["SPLD_BB_WW_BW", "SPLD_BB_WW_WB"].__contains__(case):
             ptype1 = 'LD_' + case.split('_')[1]
             ptype2 = 'LD_' + case.split('_')[2]
@@ -312,8 +303,6 @@ def runSrel(Sys, Opt_cases = None):
 
                 checkInit(Sys.ForceField, [ptype1, ptype2, ptype3])
 
-
-        
         Sys.ForceField.Update()
 
         if DEBUG:
