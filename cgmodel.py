@@ -3,25 +3,18 @@
 import os, sys
 import numpy as np
 
-sys.path.append(os.path.expanduser('~/benwat'))
-import mysim
-import sim
+sys.path.append(os.path.expanduser('~/software')) ; import mysim ; import sim
 
 import pickleTraj
 import parse_potential as pp
 
-doMinimize = False
 DEBUG = False
 
-############################ INPUTS ############################################
-global NB, NW, LDCutBB, LDCutBW, LDCutWB, LDCutWW
-global LammpsTraj
-
 # system description
+Prefix = None
 NB = 250
 NW = 250
-Prefix = None
-BoxL = []
+BoxL = None
 LDCutBB = None
 LDCutBW = None
 LDCutWB = None
@@ -37,39 +30,32 @@ StepFreq = 1000
 
 # Srel optimization settings
 LammpsTraj = None
-CG_Thermostat = None
 LangevinGamma = 0.01
+useLammps = True
 isInit = False
 
-# Multi Srel optimization settings
-doMultiSrel = False
-MultiLammpsTraj = []
-MultiNBList = []
-MultiNWList = []
-
 # Lammps settings
-sim.export.lammps.LammpsExec = 'lmp_tsanyal'
+sim.export.lammps.LammpsExec = os.path.expanduser('~/software/tanmoy_lammps/lammps-15May15/src/lmp_ZIN')
 sim.export.lammps.InnerCutoff = 0.02
-sim.srel.base.ErrorDiffEneFracTol = 0.6 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run 
+sim.srel.base.DiffEneFracTol = 0.1 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run 
 
-################################################################################
+# Parallelization settings
+useParallel = False
+NCores = 2
 																				
-# system parameters
+# System parameters
 TempSet = 300
 Name_W = 'W' ; Name_B = 'B'
 Mass_W = 18.01 ; Mass_B = 78.11
 Dia_W = 2.8 ; Dia_B = 5.3
 SPCutScale = 2.5
-RhoMin = 0 ; RhoMax = 50 ; LD_Delta = 1.2
+RhoMin = 0 ; RhoMax = 50 ; LD_Delta = 1.0
 NSPKnots = 30 ; NLDKnots = 30
 
 
-def makeSysPrefix():
-    if Prefix: return Prefix
-    else: return 'NB%dNW%d' % (NB, NW)
-
-
 def isImageOverlap(Cut = None):
+    if Cut is None: return
+    global BoxL
     flag = 0
     HalfBoxL = 0.5 * np.array(BoxL)
     for x in HalfBoxL:
@@ -79,133 +65,126 @@ def isImageOverlap(Cut = None):
     return flag
 
 
-def SetSPCutoff():
-    SPCutWW = SPCutScale * Dia_W
-    SPCutBB = SPCutScale * Dia_B
-    SPCutBW = SPCutScale * 0.5 * (Dia_B + Dia_W)
-    return (SPCutWW, SPCutBB, SPCutBW)
-    
-
 def makeSys():
-    global NB, NW
-    global LDCutBB, LDCutBW, LDCutWB, LDCutWW, BoxL
-    global LammpsTraj
+    global NB, NW, BoxL
+    global LDCutBB, LDCutBW, LDCutWB, LDCutWW
+    global LammpsTraj, Prefix
+
+    # read trajectory
+    if LammpsTraj: Trj = pickleTraj(LammpsTraj)
 
     # system chemistry
+    if Prefix is None: Prefix = 'NB%dNW%d' % (NB, NW)
     AtomTypeW = sim.chem.AtomType(Name_W, Mass = Mass_W, Charge = 0.0, Color = (0,0,1))
     AtomTypeB = sim.chem.AtomType(Name_B, Mass = Mass_B, Charge = 0.0, Color = (1,1,0))
     MolTypeW = sim.chem.MolType(Name_W, [AtomTypeW])
     MolTypeB = sim.chem.MolType(Name_B, [AtomTypeB])
     World = sim.chem.World([MolTypeB, MolTypeW], Dim = 3, Units = sim.units.AtomicUnits)
-    Sys = sim.system.System(World, Name = makeSysPrefix())
+    Sys = sim.system.System(World, Name = Prefix)
     for i in range(NB): Sys += MolTypeB.New()
     for i in range(NW): Sys += MolTypeW.New()
     
-    # box lengths
-    if doMultiSrel: BoxL = [100,100,100] # large dummy boxlength
-    else: 
-        if not BoxL.any(): BoxL = pickleTraj(LammpsTraj).FrameData['BoxL']
+    # box lengths and cutoffs
+    SPCutWW = SPCutScale * Dia_W
+    SPCutBB = SPCutScale * Dia_B
+    SPCutBW = SPCutScale * 0.5 * (Dia_B + Dia_W)
+    if BoxL is None: BoxL = Trj.FrameData['BoxL']
     Sys.BoxL = BoxL
-    
-    # cutoffs
-    SPCutWW, SPCutBB, SPCutBW = SetSPCutoff()
-    for cut in [SPCutWW, SPCutBB, SPCutBW, LDCutBW, LDCutBW]:
-        if cut and isImageOverlap(cut): raise ValueError('Images are overlapping. Revise cutoffs')
-        
-    # atom selection filters
-    FilterBB = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeB])    
+    for cut in [SPCutWW, SPCutBB, SPCutBW, LDCutWW, LDCutBB, LDCutBW, LDCutWB]:
+    	if not cut is None and isImageOverlap(cut): raise ValueError('Cutoff %g violates min image distance' % cut)
+
     FilterWW = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeW])
+    FilterBB = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeB])    
     FilterBW = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeB])
+    FilterWW_ordered = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeW], Ordered = True)
+    FilterBB_ordered = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeB], Ordered = True)
     FilterBW_ordered = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeW], Ordered = True)
     FilterWB_ordered = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeB], Ordered = True)
-    FilterBB_ordered = sim.atomselect.PolyFilter([AtomTypeB, AtomTypeB], Ordered = True)
-    FilterWW_ordered = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeW], Ordered = True)
             
-    # potential energy objects (only BB spline if dry benzene)
-    SP_BB = None ; SP_WW = None; SP_BW = None
-    LD_BB = None; LD_WW = None; LD_BW = None; LD_WB = None 
+    # forcefield (only BB spline if dry benzene)
+    SP_WW = None ; SP_BB = None; SP_BW = None
+    LD_WW = None; LD_BB = None; LD_BW = None; LD_WB = None 
     SP = sim.potential.PairSpline
     LD = sim.potential.LocalDensity
     SP_BB = SP(Sys, Cut = SPCutBB, NKnot = NSPKnots, Filter = FilterBB, Label = "SP_BB")
-    if NW:
-        SP_WW = SP(Sys, Cut = SPCutWW, NKnot = NSPKnots, Filter = FilterWW, Label = "SP_WW")
-        SP_BW = SP(Sys, Cut = SPCutBW, NKnot = NSPKnots, Filter = FilterBW, Label = "SP_BW")
-        if LDCutBW:
-            LD_BW = LD(Sys, Cut = LDCutBW, LowerCut = LDCutBW - LD_Delta, NKnot = NLDKnots, 
-                       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BW", Filter = FilterBW_ordered)
+    SP_WW = SP(Sys, Cut = SPCutWW, NKnot = NSPKnots, Filter = FilterWW, Label = "SP_WW")
+    SP_BW = SP(Sys, Cut = SPCutBW, NKnot = NSPKnots, Filter = FilterBW, Label = "SP_BW")
+    if not LDCutWW is None: LD_WW = LD(Sys, Cut = LDCutWW, LowerCut = LDCutWW - LD_Delta, NKnot = NLDKnots, 
+                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WW", Filter = FilterWW_ordered)
+    if not LDCutBB is None: LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutBB - LD_Delta, NKnot = NLDKnots, 
+                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)
+    if not LDCutBW is None: LD_BW = LD(Sys, Cut = LDCutBW, LowerCut = LDCutBW - LD_Delta, NKnot = NLDKnots, 
+                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BW", Filter = FilterBW_ordered)
+    if not LDCutWB is None: LD_WB = LD(Sys, Cut = LDCutWB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots, 
+                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
     
-        if LDCutWB:
-            LD_WB = LD(Sys, Cut = LDCutWB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots, 
-                       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
-        
-        if LDCutBB:
-            LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutBB - LD_Delta, NKnot = NLDKnots, 
-                       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)
-
-        if LDCutWW:
-        	LD_WW = LD(Sys, Cut = LDCutWW, LowerCut = LDCutWW - LD_Delta, NKnot = NLDKnots,
-        		       RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WW", Filter = FilterWW_ordered)                 
-    
-    # system forcefield
-    for P in [SP_BB, SP_WW, SP_BW, LD_BB, LD_BW, LD_WB, LD_WW]:
+    if not NW: SP_WW = LD_WW = LD_BW = LD_WB = None
+    for P in [SP_WW, SP_BB, SP_BW, LD_WW, LD_BB, LD_BW, LD_WB]:
         if P: Sys.ForceField.extend([P])
-      
-    # set up the histograms, must be done for Srel to work properly
-    for P in Sys.ForceField: P.Arg.SetupHist(NBin = 10000, ReportNBin = 100)
-    
-    # spline treatment
     Sys.ForceField.SetSplineTreatment(NonbondEneSlope = 40., BondEneSlope = 10., AngleEneSlope = 60.)
-    
-    # compile and load the system
-    Sys.Load()
+    for P in Sys.ForceField: P.Arg.SetupHist(NBin = 10000, ReportNBin = 100)
 
-    # set up initial positions and velocities
-    sim.system.init.positions.CubicLatticeFill(Sys, Random = 0.1)
+    # system setup
+    Sys.Load()
+    if LammpsTraj: Sys.Arrays.Pos = Trj[0]
+    else: sim.system.init.positions.CubicLatticeFill(Sys, Random = 0.1)
     sim.system.init.velocities.Canonical(Sys, Temp = TempSet)
-    
-    # reference the integrator
     Int = Sys.Int
+    for Method in Int.Methods:
+    	if hasattr(Method, 'TimeStep'): Method.TimeStep = 2.0
     
-    # time-step
-    #For now run with default sim time-step
-    
-    # load the force field if supplied
-    if ParamString: Sys.ForceField.SetParamString(ParamString)
-    
-    # preliminary energy minimization (not advisable, since sim serial routines are slow)
-    if doMinimize:
+    if not useLammps:
     	Int.Method = Int.Methods.VVQuench
-    	Int.Run(10000, "Minimizing")
+    	Int.Run(1000, "Minimizing")
     
     #change to MD
     Int.Method = Int.Methods.VVIntegrate
     Int.Method.Thermostat = Int.Method.ThermostatLangevin
     Int.Method.LangevinGamma = LangevinGamma
     Sys.TempSet = TempSet
-    
-    if DEBUG: print Sys.ForceField.ParamString()
+
     return Sys
 
+
+def mapTrj(InTraj, OutTraj =  None):
+	# this function has been intentionally kept free of global variables
+	# and thus unhinged from the rest of the module, to enable different 
+	# kinds of mapping if need be
+	Map = sim.atommap.PosMap()
+	for i in range(0, NB):  Map += [sim.atommap.AtomMap(Atoms1 = range(i*12, (i+1)*12, 2), Atom2 = i)]
+	for i in range(0, NW):  Map += [sim.atommap.AtomMap(Atoms1 = range(NB*12+i, NB*12+i+3, 3), Atom2 = NB+i)]
+	AtomTypes = [1]*NB + [2]*NW
+	Trj = pickleTraj(InTraj)
+	BoxL = Trj.FrameData['BoxL']
+	if OutTraj is None: OutTraj = InTraj.split('.lammpstrj.gz')[0] + '_mapped.lammpstrj.gz'
+	MappedTrj = sim.traj.Mapped(Trj, Map, AtomNames = AtomTypes, BoxL = BoxL)
+	sim.traj.Convert(MappedTrj, sim.traj.LammpsWrite, OutTraj, Verbose = True)            
+
+
+def runSrel(Sys, ParamString = None, Opt_cases = None):
+    # Lammps export setting
+    global useLammps, useParallel, NCores
+    sim.export.lammps.useParallel = useParallel
+    sim.export.lammps.NCores = NCores
     
-def runSrel(Sys, Opt_cases = None):
     global NB, NW
     global LDCutBB, LDCutBW, LDCutWB, LDCutWW, BoxL
-    global LammpsTraj
+    global LammpsTraj, Prefix
 
     Sys = makeSys()
     Map = sim.atommap.PosMap() # note all AA trajectories are in COM format
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
     
-    if not doMultiSrel:
-    	Trj = pickleTraj(LammpsTraj, Verbose = False)
-    	Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
-    else:
-    	Opt = genMultiOpt(Sys, Map)
-    
+    Trj = pickleTraj(LammpsTraj, Verbose = False)
+    OptObj = sim.srel.OptimizeTrajLammpsClass if useLammps else sim.srel.OptimizeTrajClass
+    Opt = OptObj(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
     sim.srel.optimizetraj.PlotFmt = 'svg'
     Opt.StepsMin = MinSteps
+    Opt.TempFileDir = os.getcwd()
+    Opt.MinReweightFrac = 0.2
 
     # freeze all potentials
+    if ParamString: Sys.ForceField.SetParamString(ParamString)
     [P.FreezeParam() for P in Sys.ForceField]
     
     # create separate lists for pair and local density potentials
@@ -215,13 +194,11 @@ def runSrel(Sys, Opt_cases = None):
     	if P.Name.__contains__('SP'): SPList.append(P)
     	if P.Name.__contains__('LD'): LDList.append(P)
 
-
     def checkInit(Forcefield, ptypes):
     	if not isInit: return
     	for potential in Forcefield:
     		if SPList.__contains__(potential): potential.FreezeParam()
     		if LDList.__contains__(potential) and not ptypes.__contains__(potential.Name): potential.FreezeParam()
-
 
     # relative entropy minimization
     if not Opt_cases: Opt_cases = ["SP", "SPLD_BB", "SPLD_WW", "SPLD_BW", "SPLD_WB", "SPLD_BB_WW", "SPLD_BB_BW", "SPLD_BB_WB", "SPLD_WW_BW", "SPLD_WW_WB", "SPLD_BB_WW_BW", "SPLD_BB_WW_WB"]
@@ -344,13 +321,4 @@ def genMultiOpt(Sys, Map):
 											   FilePrefix = Prefix + '_multi')
 
 	return MultiOpt
-
-
-def runCGMD(Sys, forcefield):
-    pp.loadParam(Sys = Sys, sumfile = forcefield)
-    # export to Lammps
-    Trj, TrjFile = sim.export.lammps.MakeLammpsTraj(Sys = Sys, Prefix = Prefix, NStepsMin = MinSteps, 
-                                                    NStepsEquil = EquilSteps, NStepsProd = ProdSteps, 
-                                                    WriteFreq = StepFreq, TrajFile = '.lammpstrj.gz', Verbose = True)
-    return Trj, TrjFile  
 
