@@ -130,6 +130,8 @@ def mapTrj(InTraj, OutTraj =  None):
 	# this function has been intentionally kept free of global variables
 	# and thus unhinged from the rest of the module, to enable different
 	# kinds of mapping if need be
+	
+	global NB, NW
 	Map = sim.atommap.PosMap()
 	for i in range(0, NB):  Map += [sim.atommap.AtomMap(Atoms1 = range(i*12, (i+1)*12, 2), Atom2 = i)]
 	for i in range(0, NW):  Map += [sim.atommap.AtomMap(Atoms1 = range(NB*12+i, NB*12+i+3, 3), Atom2 = NB+i)]
@@ -170,10 +172,12 @@ def runSrel(Sys, ParamString = None):
                      'SPLD_BB': ['LD_BB'],
                      'SPLD_BW': ['LD_BW'],
                      'SPLD_WB': ['LD_WB'],
-                           }
+                     'all': [P.Name for P in Sys.ForceField if not P is None]}
     if OptStageNames is None: OptStageNames = OptStages.keys()
 
     # stagewise optimization
+    print '\n\n'
+    print len(OptStageNames), 'Stages:', ' '.join(OptStageNames)
     for k in OptStageNames:
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + k
@@ -195,28 +199,33 @@ def runSrel(Sys, ParamString = None):
         print "Unfreezing:", ', '.join(UnfrozenList)
 
         Sys.ForceField.Update()
-
-        if DEBUG:
-            print Sys.ForceField.ParamString()
-            for P in Sys.ForceField:
-                count = 0
-                for param in P.Param.Fixed:
-                    if param: count += 1
-                if count == len(P.Knots): print '\n%s Frozen' % P.Name
-
-        Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
-
-        # simultaneous optimization
-        [P.UnfreezeParam() for P in Sys.ForceField if not P is None]
-        Opt.Reset()
-        Opt.FilePrefix = Prefix
-        print 'Optimizing all...'
-        Sys.ForceField.Update()
         Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
 
     del Opt
 
 
+def runMD(Sys, ParamString):
+    global LammpsTraj, Prefix, TempSet
+    global MinSteps, EquilSteps, ProdSteps, StepFreq
+    
+    Trj = pickleTraj(LammpsTraj, Verbose = False)
+    BoxL = Trj.FrameData['BoxL']
+    
+    Sys.ForceField.SetParamString(ParamString)
+    
+    # sanity check of system parameters
+    if not Sys.TempSet == TempSet: Sys.TempSet = TempSet
+    Sys.BoxL = BoxL
+    
+    ModTraj, ModTrajFile = sim.export.lammps.MakeLammpsTraj(Sys, Prefix = Prefix, TrajFile = ".lammpstrj.gz",
+                                                            NStepsMin = MinSteps, NStepsEquil = EquilSteps, 
+                                                            NStepsProd = ProdSteps, WriteFreq = StepFreq)
+    
+    return ModTraj, ModTrajFile
+ 
+
+
+#TODO: correct this routine
 def genMultiOpt(Sys, Map):
 	global BoxL, LammpsTraj
 
