@@ -22,21 +22,29 @@ def make_rdf_BW(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
     return measure.makeRDF(1,2, Prefix = Prefix)
 
-def make_ld_BB(Traj, Prefix, LDCutBB = 7.5, LDDelta = 1.0):
+def make_ld_BB(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(1,1, Prefix = Prefix, LDCut = LDCutBB, LDDelta = LDDelta)
+    LDCut = kwargs['LDCutBB']
+    LDDelta = kwargs.get('LDDelta', 1.0)
+    return measure.makeLDHist(1,1, Prefix = Prefix, LDCut = LDCut, LDDelta = LDDelta)
 
-def make_ld_WW(Traj, Prefix, LDCutWW = 3.5, LDDelta = 1.0):
+def make_ld_WW(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(2,2, Prefix = Prefix, LDCut = LDCutWW, LDDelta = LDDelta)
+    LDCut = kwargs['LDCutWW']
+    LDDelta = kwargs.get('LDDelta', 1.0)
+    return measure.makeLDHist(2,2, Prefix = Prefix, LDCut = LDCut, LDDelta = LDDelta)
 
-def make_ld_BW(Traj, Prefix, LDCutBW = 5.5, LDDelta = 1.0):
+def make_ld_BW(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(1,2, Prefix = Prefix, LDCut = LDCutBW, LDDelta = LDDelta)
+    LDCut = kwargs['LDCutBW']
+    LDDelta = kwargs.get('LDDelta', 1.0)
+    return measure.makeLDHist(1,2, Prefix = Prefix, LDCut = LDCut, LDDelta = LDDelta)
     
-def make_ld_WB(Traj, Prefix, LDCutWB = 5.5, LDDelta = 1.0):
+def make_ld_WB(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(2,1, Prefix = Prefix, LDCut = LDCutWB, LDDelta = LDDelta)
+    LDCut = kwargs['LDCutWB']
+    LDDelta = kwargs.get('LDDelta', 1.0)
+    return measure.makeLDHist(2,1, Prefix = Prefix, LDCut = LDCut, LDDelta = LDDelta)
 
 def makeClusterHist(Traj, Cut, ClustAtomType, Prefix = 'clust', Normalize = True):
     global StepFreq, Trj, BoxL, AtomTypes, FrameRange, NFrames
@@ -44,44 +52,51 @@ def makeClusterHist(Traj, Cut, ClustAtomType, Prefix = 'clust', Normalize = True
     measure.__parseFrameData()
     
     clustpickle = Prefix + '.pickle'
-    if __isComputed(clustpickle):
+    if measure.__isComputed(clustpickle):
         return ( pickle.load(open(clustpickle, 'r')), clustpickle)
+    
+    Trj = measure.Trj
+    BoxL = measure.BoxL
+    NFrames = measure.NFrames
+    NBlocks = measure.NBlocks
+    FrameRange = measure.FrameRange
     
     inds = np.where(measure.AtomTypes == ClustAtomType)
     NAtoms = len(inds[0])
     hist = np.zeros([NAtoms, 3])
     bin_vals_block = np.zeros([NAtoms, measure.NBlocks], np.float64)
-    clust_frame = np.zeros([measure.NFrames, NAtoms])
+    clust_frame = np.zeros([NFrames, NAtoms+1])
     
-    pb = sim.utility.ProgressBar(Text = '', Steps = measure.NFrames)
-    for frame_Ind, frame in enumerate(measure.FrameRange):
+    pb = sim.utility.ProgressBar(Text = '', Steps = NFrames)
+    for frame_Ind, frame in enumerate(FrameRange):
         Pos = Trj[frame][inds]
         clustdist, clustgroups = sim.geom.ClusterStats(Pos = Pos, BoxL = BoxL, Cutoff = Cut)
-        if Normalize: clustdist /= np.sum(np.array(clustdist))
-        clust_frame[frame_Ind, :] = np.array(clustdist)
+        clustdist = np.array(clustdist)
+        clust_frame[frame_Ind, :] = clustdist / np.sum(clustdist)
         pb.Update(frame_Ind)
 
-    BlockSize = int(measure.NFrames / measure.NBlocks)
-    for b in range(measure.NBlocks):
+    BlockSize = int(NFrames / NBlocks)
+    for b in range(NBlocks):
         bin_vals_block[:, b] = np.mean(clust_frame[b*BlockSize:(b+1)*BlockSize, :], axis = 0)
     
-    bin_centers = range(1, NAtoms+1)
+    bin_centers = range(NAtoms+1)
     bin_vals = np.mean(bin_vals_block, axis = 1)
     bin_errs = np.std(bin_vals_block, axis = 1, ddof = 1)
    
     pickle.dump( (bin_centers, bin_vals, bin_errs), open(clustpickle, 'w'))
     return hist, clustpickle
     
-def make_clust_BB(Traj, Prefix, ClustCutBB):
-    return makeClusterHist(Traj = Traj, Prefix = Prefix, ClustAtomType = 1, Cut = ClustCutBB)
+def make_clust_BB(Traj, Prefix, **kwargs):
+    Cut = kwargs['ClustCutBB']
+    return makeClusterHist(Traj = Traj, Prefix = Prefix, ClustAtomType = 1, Cut = Cut)
 
-def make_clust_WW(Traj, Prefix, ClustCutWW):
-    return makeClusterHist(Traj = Traj, Prefix = Prefix, ClustAtomType = 2, Cut = ClustCutWW)
+def make_clust_WW(Traj, Prefix, **kwargs):
+    Cut = kwargs['ClustCutWW']
+    return makeClusterHist(Traj = Traj, Prefix = Prefix, ClustAtomType = 2, Cut = Cut)
 
 
 
 ##### GLOBALS #####
-DelTempFiles = True
 AtomTypes = {'B': 1, 'W': 2}
 
 # analysis parameters
@@ -157,7 +172,7 @@ class Transferability:
         s2 = os.path.join(self.RawDir, s1)
         return s1, s2
         
-    def Compute(self, *args, **kwargs):
+    def Compute(self, **kwargs):
         global NB, NW, MeasureFuncs
         mDict = shelve.open(self.Shelf)
         for i in self.Measures:
@@ -169,7 +184,7 @@ class Transferability:
                     print '  NB = %d, NW = %d\n' % (NB[k], NW[k])
                     mKey, mPrefix = self.genKey(i, j, NB[k], NW[k])
                     f = MeasureFuncs[i]
-                    ret, retPickle = f(Traj = trajlist[k], Prefix = mPrefix, *args, **kwargs)
+                    ret, retPickle = f(Traj = trajlist[k], Prefix = mPrefix, **kwargs)
                     mDict[mKey] = ret
         mDict.close()
     
@@ -231,9 +246,9 @@ def dummy_test():
               'SP': ['/home/cask0/home/tsanyal/benwat/data/gromacs/NB300NW200/NB300NW200_prod_mapped.lammpstrj.gz',
                      '/home/cask0/home/tsanyal/benwat/data/gromacs/NB100NW400/NB100NW400_prod_mapped.lammpstrj.gz']}
 
-    t = Transferability(CGTraj = CGTraj, Prefix = 'test', Measures = ['ld_BB'])
-    t.Compute(LDCutBB = 7.5)
-    t.Plot('ld_BB', RefNB = 200, RefNW = 300)
+    t = Transferability(CGTraj = CGTraj, Prefix = 'test', Measures = ['ld_WW', 'ld_BB'])
+    t.Compute(LDCutBB = 7.5, LDCutWW = 3.5)
+    t.Plot('ld_WW', RefNB = 200, RefNW = 300)
     plt.show()
 
 
