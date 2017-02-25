@@ -10,33 +10,33 @@ import cgmodel as cg
 
 
 ##### MEASURE FUNCTIONS #####
-def make_rdf_BB(Traj, Prefix):
+def make_rdf_BB(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
     return measure.makeRDF(1,1, Prefix = Prefix)
 
-def make_rdf_WW(Traj, Prefix):
+def make_rdf_WW(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
     return measure.makeRDF(2,2, Prefix = Prefix)
     
-def make_rdf_BW(Traj, Prefix):
+def make_rdf_BW(Traj, Prefix, **kwargs):
     measure.LammpsTraj = Traj
     return measure.makeRDF(1,2, Prefix = Prefix)
 
-def make_ld_BB(Traj, Prefix, LDCutBB, LDDelta):
+def make_ld_BB(Traj, Prefix, LDCutBB = 7.5, LDDelta = 1.0):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(1,1, LDCut = LDCutBB, LDDelta = LDDelta)
+    return measure.makeLDHist(1,1, Prefix = Prefix, LDCut = LDCutBB, LDDelta = LDDelta)
 
-def make_ld_WW(Traj, Prefix, LDCutWW, LDDelta):
+def make_ld_WW(Traj, Prefix, LDCutWW = 3.5, LDDelta = 1.0):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(2,2, LDCut = LDCutWW, LDDelta = LDDelta)
+    return measure.makeLDHist(2,2, Prefix = Prefix, LDCut = LDCutWW, LDDelta = LDDelta)
 
-def make_ld_BW(Traj, Prefix, LDCutBW, LDDelta):
+def make_ld_BW(Traj, Prefix, LDCutBW = 5.5, LDDelta = 1.0):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(1,2, LDCut = LDCutBW, LDDelta = LDDelta)
+    return measure.makeLDHist(1,2, Prefix = Prefix, LDCut = LDCutBW, LDDelta = LDDelta)
     
-def make_ld_WB(Traj, Prefix, LDCutWB, LDDelta):
+def make_ld_WB(Traj, Prefix, LDCutWB = 5.5, LDDelta = 1.0):
     measure.LammpsTraj = Traj
-    return measure.makeLDHist(2,1, LDCut = LDCutWB, LDDelta = LDDelta)
+    return measure.makeLDHist(2,1, Prefix = Prefix, LDCut = LDCutWB, LDDelta = LDDelta)
 
 def makeClusterHist(Traj, Cut, ClustAtomType, Prefix = 'clust', Normalize = True):
     global StepFreq, Trj, BoxL, AtomTypes, FrameRange, NFrames
@@ -157,7 +157,7 @@ class Transferability:
         s2 = os.path.join(self.RawDir, s1)
         return s1, s2
         
-    def Compute(self, **kwargs):
+    def Compute(self, *args, **kwargs):
         global NB, NW, MeasureFuncs
         mDict = shelve.open(self.Shelf)
         for i in self.Measures:
@@ -169,7 +169,7 @@ class Transferability:
                     print '  NB = %d, NW = %d\n' % (NB[k], NW[k])
                     mKey, mPrefix = self.genKey(i, j, NB[k], NW[k])
                     f = MeasureFuncs[i]
-                    ret, retPickle = f(Traj = trajlist[k], Prefix = mPrefix, **kwargs)
+                    ret, retPickle = f(Traj = trajlist[k], Prefix = mPrefix, *args, **kwargs)
                     mDict[mKey] = ret
         mDict.close()
     
@@ -191,7 +191,6 @@ class Transferability:
             ax.hold(True)
         if showLegend: ax.legend(loc = 'best', prop = {'size': 15})
         mDict.close()
-        plt.show()
         
                 
     def Plot(self, Measure, RefNB = None, RefNW = None):
@@ -219,11 +218,12 @@ class Transferability:
                 if r == 0: ax.set_title('NB = %d, NW = %d' % (NB[c], NW[c]), fontsize = 10)
                 if c == 0: ax.legend(loc = 'best', prop = {'size': 15})
         mDict.close()
-        plt.show()
+        
 
 
-## Tests
-if __name__ == '__main__':
+##### Tests #####
+def dummy_test():
+    global NB, NW
     NB, NW = [200, 300], [300, 200]
     CGTraj = {'all': ['/home/cask0/home/tsanyal/benwat/data/gromacs/NB150NW350/NB150NW350_prod_mapped.lammpstrj.gz',
                       '/home/cask0/home/tsanyal/benwat/data/gromacs/NB450NW50/NB450NW50_prod_mapped.lammpstrj.gz'],
@@ -231,7 +231,21 @@ if __name__ == '__main__':
               'SP': ['/home/cask0/home/tsanyal/benwat/data/gromacs/NB300NW200/NB300NW200_prod_mapped.lammpstrj.gz',
                      '/home/cask0/home/tsanyal/benwat/data/gromacs/NB100NW400/NB100NW400_prod_mapped.lammpstrj.gz']}
 
-    t = Transferability(CGTraj = CGTraj, Prefix = 'test', Measures = ['rdf_BB', 'rdf_BW'])
-    t.Compute()
-    t.Plot('rdf_BB', RefNB = 200, RefNW = 300)
-    
+    t = Transferability(CGTraj = CGTraj, Prefix = 'test', Measures = ['ld_BB'])
+    t.Compute(LDCutBB = 7.5)
+    t.Plot('ld_BB', RefNB = 200, RefNW = 300)
+    plt.show()
+
+
+def NB250test():
+    global NB, NW
+    NB, NW = [250], [250]
+    CGTraj = {'all': ['/home/cask0/home/tsanyal/benwat/data/modtraj/NB250NW250_cgmd_all.lammpstrj.gz']} #add SP traj
+    t = Transferability(CGTraj = CGTraj, Prefix = 'NB250test')
+    t.Compute
+    for m in t.Measures: t.Plot(m, RefNB = 250, RefNW = 250)
+    plt.show()
+
+
+if __name__ == '__main__': dummy_test()
+                
