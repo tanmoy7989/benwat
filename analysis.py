@@ -4,10 +4,14 @@ import numpy as np
 import os, pickle, shelve
 import matplotlib.pyplot as plt
 
+# design
+from matplotlib.ticker import MaxNLocator
+
 import sim, pickleTraj, measure
 import cgmodel as cg
 
-
+kB = 0.001987
+TempSet = 300.
 
 ##### MEASURE FUNCTIONS #####
 def make_rdf_BB(Traj, Prefix, **kwargs):
@@ -64,7 +68,7 @@ def makeClusterHist(Traj, Cut, ClustAtomType, Prefix = 'clust', Normalize = True
     inds = np.where(measure.AtomTypes == ClustAtomType)
     NAtoms = len(inds[0])
     hist = np.zeros([NAtoms, 3])
-    bin_vals_block = np.zeros([NAtoms, measure.NBlocks], np.float64)
+    bin_vals_block = np.zeros([NAtoms+1, measure.NBlocks], np.float64)
     clust_frame = np.zeros([NFrames, NAtoms+1])
     
     pb = sim.utility.ProgressBar(Text = '', Steps = NFrames)
@@ -95,6 +99,71 @@ def make_clust_WW(Traj, Prefix, **kwargs):
     return makeClusterHist(Traj = Traj, Prefix = Prefix, ClustAtomType = 2, Cut = Cut)
 
 
+def make_KBI(Traj, Prefix = 'KBI', **kwargs):
+    KBIPickle = Prefix + '.pickle'
+    if measure.__isComputed(KBIPickle):
+        return pickle.load(open(KBIPickle, 'r')), KBIPickle    
+
+    # calculate densities
+    measure.LammpsTraj = Traj
+    measure.__parseFrameData()
+    BoxL = measure.BoxL
+    if isinstance(BoxL, list): BoxL = np.array(BoxL)
+    BoxVol = np.prod(BoxL)
+    NB = kwargs.get('NB') ; NW = kwargs.get('NW')
+    rho_B = float(NB) / BoxVol ; rho_W = float(NW) / BoxVol
+    
+    # calculate rdfs
+    hist_BB, rdfpickle_BB = make_rdf_BB(Traj, Prefix.split('KBI')[0] + 'rdf_BB')
+    hist_WW, rdfpickle_WW = make_rdf_WW(Traj, Prefix.split('KBI')[0] + 'rdf_WW')
+    hist_BW, rdfpickle_BW = make_rdf_BW(Traj, Prefix.split('KBI')[0] + 'rdf_BW')
+    r_BB, g_BB, err_BB = hist_BB
+    r_WW, g_WW, err_WW = hist_WW
+    r_BW, g_BW, err_WW = hist_BW
+
+    # calculate KB integrals
+    def func_G(r, gof, L_corr):
+        N_corr = len(L_corr)
+        G = np.zeros(N_corr)
+        dx = r[1] - r[0]
+        for i in range(N_corr):
+            try:
+                CutInd = [list(r).index(this_r) for this_r in list(r) if this_r >= L_corr[i]][0]
+            except IndexError:
+                print i, L_corr[i]
+                print r
+                exit()
+            x = r[:CutInd]
+            y = (gof[:CutInd] - 1) * x**2.
+            G[i] = 4 * np.pi * dx * np.sum(y)
+        return G
+
+    N = 50
+    Rmax = min([np.max(r_BB), np.max(r_WW), np.max(r_BW)])
+    R = np.linspace(2.0, Rmax, N) # based on Nico's paper
+    G_BB = func_G(r_BB, g_BB, R)
+    G_WW = func_G(r_WW, g_WW, R)
+    G_BW = func_G(r_BW, g_BW, R)
+    
+    # calculate excess coordination numbers
+    N_BB = rho_B * G_BB ; N_WW = rho_W * G_WW; N_BW = rho_W * G_BW
+
+    # calculate solvation parameter delta_BW
+    Delta_BW = G_BB + G_WW - 2 * G_BW ; Delta_BW = np.mean(Delta_BW[-10:]) # average over last 10 values
+    
+    # calculate dmudx
+    x_B =  float(NB) / (float(NB + NW)) ; x_W = 1.0 - x_B
+    dmudx  = (kB*TempSet) * (x_B * (1 + rho_B * x_W * Delta_BW)) ** (-1.0)
+
+    # calculate dgammadx
+    dgammadx = - (rho_W * x_B * Delta_BW) * (1 + rho_W * x_B * Delta_BW) ** (-1.0)
+    
+    # output structure
+    ret = {'R': R, 'G_BB': G_BB, 'G_WW': 'G_WW', 'G_BW': G_BW, 'N_BB': N_BB, 'N_WW': N_WW, 'N_BW': N_BW,
+         'Delta_BW': Delta_BW, 'dmudx': dmudx, 'dgammadx': dgammadx}
+    pickle.dump(ret, open(KBIPickle, 'w'))
+    return ret, KBIPickle
+
 
 ##### GLOBALS #####
 AtomTypes = {'B': 1, 'W': 2}
@@ -110,7 +179,8 @@ MeasureFuncs = {'rdf_BB'   : make_rdf_BB,
                 'ld_BW'    : make_ld_BW,
                 'ld_WB'    : make_ld_WB,
                 'clust_BB' : make_clust_BB,
-                'clust_WW' : make_clust_WW
+                'clust_WW' : make_clust_WW,
+                'KBI'	   : make_KBI
                 } 
 
 # global settings for measure
@@ -120,10 +190,10 @@ measure.NBins = 50
 measure.NBlocks = 1
 
 # plot parameters
-ref_styles = {'AA': 'ro-', 'SP': 'k:', 'all': 'k-'}
-ref_lbls = {'AA': 'AA', 'SP': 'SP', 'all': 'all'}
-transf_styles = {'AA': 'k-', 'SP': 'r-', 'all': 'b-'}
-transf_lbls = {'SP': 'AA-SP', 'all': 'AA-all'}
+ref_styles = {'AA': 'ro-', 'SP': 'bx-:', 'all': 'k-'}
+ref_lbls = {'AA': 'AA', 'SP': 'SP', 'all': 'CG'}
+transf_styles = {'AA': 'ro-', 'SP': 'bx-', 'all': 'k-'}
+transf_lbls = {'AA': 'AA', 'SP': 'AA-SP', 'all': 'CG'}
 units = {'rdf_BB'   : (r'$r(\AA)$', r'$g(r)$'),
          'rdf_WW'   : (r'$r(\AA)$', r'$g(r)$'), 
          'rdf_BW'   : (r'$r(\AA)$', r'$g(r)$'), 
@@ -184,7 +254,8 @@ class Transferability:
                     print '  NB = %d, NW = %d\n' % (NB[k], NW[k])
                     mKey, mPrefix = self.genKey(i, j, NB[k], NW[k])
                     f = MeasureFuncs[i]
-                    ret, retPickle = f(Traj = trajlist[k], Prefix = mPrefix, **kwargs)
+                    if i == 'KBI': ret, retPickle = f(Traj = trajlist[k], Prefix = mPrefix, NB = NB[k], NW = NW[k])
+                    else: ret, retPickle = f(Traj = trajlist[k], Prefix = mPrefix, **kwargs)
                     mDict[mKey] = ret
         mDict.close()
     
@@ -202,39 +273,50 @@ class Transferability:
         for i in self.TrajTypes:
             key = self.genKey(Measure, i, RefNB, RefNW)[0]
             x, y, err = mDict[key]
-            ax.plot(x, y, ref_styles[i], label = ref_lbls[i])
+            ax.plot(x, y, ref_styles[i], lw = 3, markersize = 6, label = ref_lbls[i])
             ax.hold(True)
         if showLegend: ax.legend(loc = 'best', prop = {'size': 15})
         mDict.close()
         
                 
-    def Plot(self, Measure, RefNB = None, RefNW = None):
+    def PlotHist(self, Measure, RefNB = None, RefNW = None):
         global NB, NW
         mDict = shelve.open(self.Shelf)
         if RefNB is None: RefNB = 250
         if RefNW is None: RefNW = 250
         
-        nrows = len(self.TrajTypes)-1
+        nrows = len(self.TrajTypes) - 1
         ncols = len(NB)
-        fig = plt.figure(facecolor = 'w', edgecolor = 'w')
+        fig = plt.figure(facecolor = 'w', edgecolor = 'w', figsize = (10, 3))
         
+	axs = []
         for r in range(nrows):
             for c in range(ncols):
                 ind = 1 + r*len(NB) + c
                 key_AA = self.genKey(Measure, 'AA', NB[c], NW[c])[0]
                 key_CG = self.genKey(Measure, self.TrajTypes[r+1], NB[c], NW[c])[0]
-                x_AA, y_AA, err_AA = mDict[key_AA]
-                x_CG, y_CG, err_CG = mDict[key_CG]
+		pickleAA = os.path.join(self.RawDir, key_AA + '.pickle')
+		pickleCG = os.path.join(self.RawDir, key_CG + '.pickle')                
+		x_AA, y_AA, err_AA = pickle.load(open(pickleAA, 'r')) #mDict[key_AA]
+                x_CG, y_CG, err_CG = pickle.load(open(pickleCG, 'r')) #mDict[key_CG]
                 
                 ax = fig.add_subplot(nrows, ncols, ind)
-                ax.plot(x_AA, y_AA, transf_styles['AA'])
-                ax.plot(x_CG, y_CG, transf_styles[self.TrajTypes[r+1]], label = transf_lbls[self.TrajTypes[r+1]])
+                ax.plot(x_AA, y_AA, transf_styles['AA'], lw = 0, markersize = 6, label = ref_lbls['AA'])
+                ax.plot(x_CG, y_CG, transf_styles[self.TrajTypes[r+1]], lw = 2, label = ref_lbls[self.TrajTypes[r+1]])
+		axs.append(ax)
                 
-                if r == 0: ax.set_title('NB = %d, NW = %d' % (NB[c], NW[c]), fontsize = 10)
-                if c == 0: ax.legend(loc = 'best', prop = {'size': 15})
+                if r == 0: 
+                    if NB[c] == RefNB: s = r'$x_{B} = $' + '%g (ref)' % ( float(NB[c]) / (NB[c] + NW[c]) )
+                    else: s = s = r'$x_{B} = $' + '%g' % ( float(NB[c]) / (NB[c] + NW[c]) )
+                    ax.set_title(s, fontsize = 20)
+                #if c == 0: ax.legend(loc = 'best', prop = {'size': 15})
         mDict.close()
-        
-
+	
+	# design
+	for ax in axs:
+		ax.xaxis.set_major_locator(MaxNLocator(nbins = 5, prune = 'both'))
+		ax.yaxis.set_major_locator(MaxNLocator(nbins = 5, prine = 'both'))
+	
 
 ##### Tests #####
 def dummy_test():

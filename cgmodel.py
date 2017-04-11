@@ -4,11 +4,7 @@ import os, sys
 import numpy as np
 
 import sim
-
 import pickleTraj
-import parse_potential as pp
-
-DEBUG = False
 
 # System description
 Prefix = None
@@ -22,6 +18,7 @@ Dia_W = 2.8 ; Dia_B = 5.3
 # Pair potential settings
 SPCutScale = 2.5
 NSPKnots = 30
+ManageInnerCore = True # True to capture inner core tails of corresponding histograms
 
 # Local density potential settings
 LDCutWW = None
@@ -50,7 +47,6 @@ LangevinGamma = 0.01
 sim.export.lammps.LammpsExec = os.path.expanduser('~/mysoftware/tanmoy_lammps/lammps-15May15/src/lmp_ZIN')
 sim.export.lammps.InnerCutoff = 0.02
 sim.srel.base.DiffEneFracTol = 0.1 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run
-
 
 def makeSys():
     global NB, NW, BoxL
@@ -123,6 +119,18 @@ def makeSys():
     Int.Method.LangevinGamma = LangevinGamma
     Sys.TempSet = TempSet
 
+    ## other settings based on previous trial runs
+    if ManageInnerCore:
+        SP_BB.EneInner = "50kT"
+        SP_BB.EneSlopeInner = None
+        #SP_BB.KnotMinHistFrac = 0.005
+        #SP_BB.KnotMinHistFracInner = 0.0
+        
+        #SP_BW.EneInner = "20kT"
+        #SP_BW.EneSlopeInner = None
+        SP_BW.KnotMinHistFrac = 0.01
+        SP_BB.KnotMinHistFracInner = 0.0
+                    
     return Sys
 
 
@@ -143,10 +151,20 @@ def mapTrj(InTraj, OutTraj =  None):
 	sim.traj.Convert(MappedTrj, sim.traj.LammpsWrite, OutTraj, Verbose = True)
 
 
+def ResetForceField(Sys, OptStage):
+    if not OptStage.startswith('SPLD'): return
+    LDList = OptStage.split('_')[1:]
+    for P in Sys.ForceField:
+        if P is None: continue
+        if P.Name.startswith('LD') and not LDList.__contains__(P.Name):
+            P.SetParam(Knots = 0.0)
+
+
 def runSrel(Sys, ParamString = None):
     global NB, NW
     global LDCutBB, LDCutBW, LDCutWB, LDCutWW, BoxL
     global LammpsTraj, Prefix
+    global MinSteps, EquilSteps, ProdSteps, StepFreq
     global OptStages, OptStageNames
 
     Sys = makeSys()
@@ -154,7 +172,7 @@ def runSrel(Sys, ParamString = None):
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
 
     Trj = pickleTraj(LammpsTraj, Verbose = False)
-    Opt = sim.srel.OptimizeTrajClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
+    Opt = sim.srel.OptimizeTrajClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix, Verbose = True)
     Opt = sim.srel.UseLammps(Opt)
     sim.srel.optimizetraj.PlotFmt = 'svg'
     sim.srel.optimizetrajlammps.LammpsStepsMin  = MinSteps
@@ -163,48 +181,66 @@ def runSrel(Sys, ParamString = None):
 
     # freeze all potentials
     if ParamString: Sys.ForceField.SetParamString(ParamString)
-    [P.FreezeParam() for P in Sys.ForceField if not P is None]
+    for P in Sys.ForceField:
+        if not P is None: P.FreezeParam()
 
     # optimization stages
     if OptStages is None:
-        OptStages = {'SP': ['SP_WW', 'SP_BB', 'SP_BW'],
-                     'SPLD_WW': ['LD_WW'],
-                     'SPLD_BB': ['LD_BB'],
-                     'SPLD_BW': ['LD_BW'],
-                     'SPLD_WB': ['LD_WB'],
-                     'all': [P.Name for P in Sys.ForceField if not P is None]}
-    if OptStageNames is None: OptStageNames = OptStages.keys()
+        OptStages = {
+                     # quick optimization stages
+                     'SP': ['SP_WW', 'SP_BB', 'SP_BW'],
+                     'LD_WW': ['LD_WW'],
+                     'LD_BB': ['LD_BB'],
+                     'LD_BW': ['LD_BW'],
+                     'LD_WB': ['LD_WB'],
+                     
+                     # refinement/control stages 
+                     'SPLD_BB': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BB'],
+                     'SPLD_WW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_WW'],
+                     'SPLD_BW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BW'],
+                     'SPLD_BB_WW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BB', 'LD_WW'],
+                     'SPLD_BB_BW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BB', 'LD_BW'],
+                     'SPLD_BB_WW_BW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BB', 'LD_WW', 'LD_BW'],
+                     'All': [P.Name for P in Sys.ForceField if not P is None]}
+    if OptStageNames is None:
+        OptStageNames = ['SP', 'LD_WW', 'LD_BB', 'LD_BW', 'LD_WB',
+                         'SPLD_BB', 'SPLD_WW', 'SPLD_BW', 
+                         'SPLD_BB_WW', 'SPLD_BB_BW',
+                         'SPLD_BB_WW_BW', 'All']
 
     # stagewise optimization
     print '\n\n'
-    print len(OptStageNames), 'Stages:', ' '.join(OptStageNames)
+    print len(OptStageNames), 'Stages:', ', '.join(OptStageNames)
     for k in OptStageNames:
         Opt.Reset()
         Opt.FilePrefix = Prefix + '_' + k
-        print "\nOptimizing stage: ", k
+        print "\nOptimizing stage: %s\n " %  k
         
-        FrozenList = []
-        UnfrozenList = []
-        
+        FrozenList = [] ;UnfrozenList = []
         for P in Sys.ForceField:
-            if not P is None:
-                if OptStages[k].__contains__(P.Name):
-                    P.UnfreezeParam()
-                    UnfrozenList.append(P.Name)
-                else:
-                    P.FreezeParam()
-                    FrozenList.append(P.Name)
+            if P is None: continue
+            if OptStages[k].__contains__(P.Name):
+                #print 'Estimating potential: %s' % P.Name
+                #if ParamString is None: P.Estimate()
+                P.UnfreezeParam()
+                UnfrozenList.append(P.Name)
+            else:
+                P.FreezeParam()
+                FrozenList.append(P.Name)
         
-        print "Freezing:", ', '.join(FrozenList)
-        print "Unfreezing:", ', '.join(UnfrozenList)
+        print "\nFreezing: %s" % (', '.join(FrozenList))
+        print "Unfreezing: %s\n" % (', '.join(UnfrozenList))
 
-        Sys.ForceField.Update()
+        # forcefields are reset during refinement runs
+        ResetForceField(Sys, k)
+     
+        print Sys.ForceField.ParamString()
+        
         Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
 
-    del Opt
 
 
-def runMD(Sys, ParamString):
+def runMD(Sys, ParamString, MDPrefix = None, useParallel = False, NCores = 1):
     global LammpsTraj, Prefix, TempSet
     global MinSteps, EquilSteps, ProdSteps, StepFreq
     
@@ -217,10 +253,17 @@ def runMD(Sys, ParamString):
     if not Sys.TempSet == TempSet: Sys.TempSet = TempSet
     Sys.BoxL = BoxL
     
-    ModTraj, ModTrajFile = sim.export.lammps.MakeLammpsTraj(Sys, Prefix = Prefix, TrajFile = ".lammpstrj.gz",
-                                                            NStepsMin = MinSteps, NStepsEquil = EquilSteps, 
-                                                            NStepsProd = ProdSteps, WriteFreq = StepFreq)
+    # set run prefix
+    if MDPrefix is None: MDPrefix = Prefix
     
+    # parallelization settings
+    sim.export.lammps.useParallel = useParallel
+    sim.export.lammps.NCores = NCores
+    
+    ModTraj, ModTrajFile = sim.export.lammps.MakeLammpsTraj(Sys, Prefix = MDPrefix, TrajFile = ".lammpstrj.gz",
+                                                            NStepsMin = MinSteps, NStepsEquil = EquilSteps, 
+                                                            NStepsProd = ProdSteps, WriteFreq = StepFreq,
+                                                            Verbose = True)
     return ModTraj, ModTrajFile
  
 

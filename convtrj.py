@@ -1,8 +1,10 @@
 #usr/bin/env python
 
-import os
+import os, sys
 import numpy as np
 import cgmodel as cg
+
+convtype = sys.argv[1]
 
 VMDExec = 'vmd'
 TCLFile_xtc = 'conv_xtc.tcl'
@@ -21,12 +23,12 @@ quit
     GromacsStruct = os.path.join(GromacsDir, 'NB%dNW%d' % (NB, NW), 'NB%dNW%d_equil2.gro' % (NB, NW))
     GromacsTrj = os.path.join(GromacsDir, 'NB%dNW%d' % (NB, NW), 'NB%dNW%d_prod.xtc' % (NB,NW))
     
-    LammpsTraj = GromacsTrj.split('.')[0] + '.lammpstrj'
+    LammpsTraj = GromacsTrj.split('.')[0] + '.lammpstrj.gz'
     
-    VMDParams = {'gro' : GromacsStruct, 'xtc': GromacsTrj,'lammpstrj': LammpsTraj}
-    file(TCLFile_xtc, 'w').write(tclscript % VMDParams)
-    os.system('%s -dispdev text -e %s' % (VMDExec, TCLFile_xtc))
-    os.system('gzip %s' % LammpsTraj)
+    #VMDParams = {'gro' : GromacsStruct, 'xtc': GromacsTrj,'lammpstrj': LammpsTraj}
+    #file(TCLFile_xtc, 'w').write(tclscript % VMDParams)
+    #os.system('%s -dispdev text -e %s' % (VMDExec, TCLFile_xtc))
+    #os.system('gzip %s' % LammpsTraj)
     
     cg.NB = NB
     cg.NW = NW
@@ -54,7 +56,7 @@ quit
 
     xyzTraj = os.path.join(xyzDir, 'conc_%s' % conc, 'CG_trajectory_%s.xyz' % conc)
     LammpsTraj = os.path.join(GromacsDir, 'NB%dNW%d' % (NB,NW), 'NB%dNW%d_prod.lammpstrj' % (NB, NW))
-    if not os.path.isdir(os.path.join(tarDir, 'NB%dNW%d' % (NB, NW))): os.mkdir(os.path.join(tarDir, 'NB%dNW%d' % (NB, NW)))
+    if not os.path.isdir(os.path.join(GromacsDir, 'NB%dNW%d' % (NB, NW))): os.mkdir(os.path.join(GromacsDir, 'NB%dNW%d' % (NB, NW)))
     
     VMDParams = {'xyz' : xyzTraj, 'lammpstrj': LammpsTraj, 'boxl': BoxL}
     file(TCLFile_xyz, 'w').write(tclscript % VMDParams)
@@ -63,13 +65,19 @@ quit
     
     cg.NB = NB
     cg.NW = NW
-    cg.mapTrj(LammpsTraj)
+    cg.mapTrj(LammpsTraj+'.gz')
 
+if convtype == 'xtc':
+    for NB in [200, 300, 350, 400, 450, 500]:
+        NW = 500 - NB
+        print 'NB = %d, NW = %d\n' % (NB, NW)
+        conv_xtc(NB, NW)
 
-for NB in [150, 200, 300, 350, 400, 450]:
-    NW = 500 - NB
-    print 'NB = %d, NW = %d\n' % (NB, NW)
-    conv_xtc(NB, NW)
-
+if convtype == 'xyz':
+    conc = [0.0019, 0.0038, 0.0057, 0.0076, 0.0095, 0.0076, 0.0116, 0.0526]
+    for c in conc:
+        print 'Concentration = %g' % c
+        conv_xyz(c)
+        
 for i in [TCLFile_xtc, TCLFile_xyz]:
     if os.path.isdir(i): os.remove(i)
