@@ -1,0 +1,11 @@
+--------------------------
+NB250NW250 coarse graining
+--------------------------
+1) Inner core settings for CG pair potentials SP_BB, SP_BW:
+SP_BB.EneInner = "50kT"
+SP_BB.EneSlopeInner = None
+SP_BB.KnotMinHistFracInner = 0.0
+
+2) SP_BB, SP_WW, SP_BW simultaneously, all other LD potentials set to zero and frozen
+
+3) TODO: fix overstructuring in LD_WW potential 
