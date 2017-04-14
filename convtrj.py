@@ -58,10 +58,10 @@ quit
     LammpsTraj = os.path.join(GromacsDir, 'NB%dNW%d' % (NB,NW), 'NB%dNW%d_prod.lammpstrj' % (NB, NW))
     if not os.path.isdir(os.path.join(GromacsDir, 'NB%dNW%d' % (NB, NW))): os.mkdir(os.path.join(GromacsDir, 'NB%dNW%d' % (NB, NW)))
     
-    VMDParams = {'xyz' : xyzTraj, 'lammpstrj': LammpsTraj, 'boxl': BoxL}
-    file(TCLFile_xyz, 'w').write(tclscript % VMDParams)
-    os.system('%s -dispdev text -e %s' % (VMDExec, TCLFile_xyz))
-    os.system('gzip %s' % LammpsTrj)
+    #VMDParams = {'xyz' : xyzTraj, 'lammpstrj': LammpsTraj, 'boxl': BoxL}
+    #file(TCLFile_xyz, 'w').write(tclscript % VMDParams)
+    #os.system('%s -dispdev text -e %s' % (VMDExec, TCLFile_xyz))
+    #os.system('gzip %s' % LammpsTrj)
     
     cg.NB = NB
     cg.NW = NW
@@ -74,7 +74,7 @@ if convtype == 'xtc':
         conv_xtc(NB, NW)
 
 if convtype == 'xyz':
-    conc = [0.0019, 0.0038, 0.0057, 0.0076, 0.0095, 0.0076, 0.0116, 0.0526]
+    conc = [0.0019, 0.0038, 0.0116] #[0.0019, 0.0038, 0.0057, 0.0076, 0.0095, 0.0076, 0.0116, 0.0526]
     for c in conc:
         print 'Concentration = %g' % c
         conv_xyz(c)

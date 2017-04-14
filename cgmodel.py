@@ -25,10 +25,12 @@ LDCutWW = None
 LDCutBB = None
 LDCutBW = None
 LDCutWB = None
-NLDKnots = 30
 RhoMin = 0
 RhoMax = 20
 LD_Delta = 1.0
+NLDKnots = 30
+NLDWWKnots = 50
+useMoreLDWWKnots = False
 
 # MD settings
 MinSteps = 1000
@@ -89,7 +91,9 @@ def makeSys():
     SP_BB = SP(Sys, Cut = SPCutBB, NKnot = NSPKnots, Filter = FilterBB, Label = "SP_BB")
     SP_WW = SP(Sys, Cut = SPCutWW, NKnot = NSPKnots, Filter = FilterWW, Label = "SP_WW")
     SP_BW = SP(Sys, Cut = SPCutBW, NKnot = NSPKnots, Filter = FilterBW, Label = "SP_BW")
-    if not LDCutWW is None: LD_WW = LD(Sys, Cut = LDCutWW, LowerCut = LDCutWW - LD_Delta, NKnot = NLDKnots,
+    
+    n = NLDKnots if not useMoreLDWWKnots else NLDWWKnots
+    if not LDCutWW is None: LD_WW = LD(Sys, Cut = LDCutWW, LowerCut = LDCutWW - LD_Delta, NKnot = n,
                        				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WW", Filter = FilterWW_ordered)
     if not LDCutBB is None: LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutBB - LD_Delta, NKnot = NLDKnots,
                        				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)
@@ -123,11 +127,6 @@ def makeSys():
     if ManageInnerCore:
         SP_BB.EneInner = "50kT"
         SP_BB.EneSlopeInner = None
-        #SP_BB.KnotMinHistFrac = 0.005
-        #SP_BB.KnotMinHistFracInner = 0.0
-        
-        #SP_BW.EneInner = "20kT"
-        #SP_BW.EneSlopeInner = None
         SP_BW.KnotMinHistFrac = 0.01
         SP_BB.KnotMinHistFracInner = 0.0
                     
