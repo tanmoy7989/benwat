@@ -111,9 +111,9 @@ def makeSys():
     # system setup
     Sys.Load()
     if LammpsTraj:
+        Sys.BoxL = Trj.FrameData['BoxL']
         Sys.Arrays.Pos = Trj[0]
-    else:
-        sim.system.init.positions.CubicLatticeFill(Sys, Random = 0.1)
+    else: sim.system.init.positions.CubicLatticeFill(Sys, L = 1000., Random = 0.1)
     sim.system.init.velocities.Canonical(Sys, Temp = TempSet)
     Int = Sys.Int
 
@@ -243,14 +243,15 @@ def runMD(Sys, ParamString, MDPrefix = None, useParallel = False, NCores = 1):
     global LammpsTraj, Prefix, TempSet
     global MinSteps, EquilSteps, ProdSteps, StepFreq
     
-    Trj = pickleTraj(LammpsTraj, Verbose = False)
-    BoxL = Trj.FrameData['BoxL']
+    if LammpsTraj:
+        Trj = pickleTraj(LammpsTraj, Verbose = False)
+        Sys.BoxL = Trj.FrameData['BoxL']
+        Sys.Arrays.Pos = Trj[0]
     
     Sys.ForceField.SetParamString(ParamString)
     
     # sanity check of system parameters
     if not Sys.TempSet == TempSet: Sys.TempSet = TempSet
-    Sys.BoxL = BoxL
     
     # set run prefix
     if MDPrefix is None: MDPrefix = Prefix

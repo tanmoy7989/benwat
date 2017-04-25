@@ -1,7 +1,5 @@
 #!/usr/bin/env python
-import os, sys
-import numpy as np
-
+import os, sys, copy, numpy as np
 
 DelTempFiles = True
 
@@ -196,14 +194,14 @@ structure benzene.pdb
   number %(NB)d
   resnumbers 2
   centerofmass
-  inside box -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g 
+  inside box -%(half_Lx)g -%(half_Ly)g -%(half_Lz)g %(half_Lx)g %(half_Ly)g %(half_Lz)g 
 end structure
 
 structure water.pdb
   number %(NW)d
   resnumbers 2
   centerofmass
-  inside box -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g -%(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g %(Packmol_halfboxL)g 
+  inside box -%(half_Lx)g -%(half_Ly)g -%(half_Lz)g %(half_Lx)g %(half_Ly)g %(half_Lz)g
 end structure
 ''' 
 
@@ -384,14 +382,19 @@ def makeBoxL(MolWt = Mass_W, rho = rho_W):
     else: Nmols = NB
     BoxVol = v * NB
     BoxL = BoxVol**(1./3.) #boxlength based on packing of specific molecule (Water or benzene)
-    return BoxL + 2.8      #2.8 nm is 2*cutoff sent by Christine 
+    BoxL += 2.8  #2.8 nm is 2*cutoff sent by Christine 
+    BoxL *= 10.0 # convert to A
+    return BoxL
 
 
 
 def makeParamDict(BoxL, Prefix = 'benwat'):
+    if not isinstance(BoxL, list): BoxL = [copy.copy(BoxL)]*3
+    Lx = BoxL[0] ; Ly = BoxL[1]; Lz = BoxL[2]
     d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'equilsteps': EQUILSTEPS, 'prodsteps': PRODSTEPS, 
          'calcsteps': NEIGHCALCSTEPS,'stepfreq': STEPFREQ, 'restart_time_mins': RESTART_TIME_MINS, 'timestep': TIMESTEP, 
-         'Prefix': Prefix, 'BoxL': BoxL, 'Packmol_halfboxL': 0.5 *(10.*BoxL-2.), 'Packmol_tol': Packmol_tol,
+         'Prefix': Prefix, 'Lx': Lx, 'Ly': Ly, 'Lz': Lz, 'Packmol_tol': Packmol_tol,
+         'half_Lx': 0.5*Lx*10-1.0, 'half_Ly': 0.5*Ly*10-1.0, 'half_Lz': 0.5*Lz*10-1.0,
          'TempSet': TempSet, 'PressSet': 1.0, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
 
     return d
@@ -409,7 +412,8 @@ def makeData(paramdict = None):
 editconf -f benzene.gro -o benzene.pdb
 editconf -f water.gro -o water.pdb
 packmol < solvate.inp
-editconf -f %(Prefix)s.pdb -o %(Prefix)s.gro -bt cubic -box %(BoxL)g %(BoxL)g %(BoxL)g
+#editconf -f %(Prefix)s.pdb -o %(Prefix)s.gro -bt cubic -box %(Lx)g %(Ly)g %(Lz)g
+editconf -f %(Prefix)s.pdb  -o %(Prefix)s.gro -box %(Lx)g %(Ly)g %(Lz)g
 ''' % paramdict
 
     os.system(cmdstring)
@@ -463,7 +467,7 @@ def doNPT(paramdict = None):
     else: s_ndx = ' '
     cmdstring = '''
 grompp''' + s_ndx +  '''-f %(Prefix)s_npt.mdp -c %(Prefix)s_minim1.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr -maxwarn 100
-mdrun -nt %(Ncores)d -npme -1 -dlb no -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
+mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
 ''' % paramdict
     
     os.system(cmdstring)

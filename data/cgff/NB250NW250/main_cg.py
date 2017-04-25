@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 import os, sys
-import pickleTraj
-
 import cgmodel as cg
 
 # LDCuts:--
@@ -36,5 +34,4 @@ cg.StepFreq = 100
 Sys = cg.makeSys()
 
 cg.useLammps = True
-cg.OptStageNames = ['SP', 'SPLD_BB', 'SPLD_WW', 'SPLD_BW']
-cg.runSrel(Sys = Sys, ParamString = file('ff0_SP.dat').read())
+cg.runSrel(Sys = Sys)
