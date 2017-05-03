@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 
 import os, sys, numpy as np, cPickle as pickle
-import sim, pickleTraj, measure, cgmodel as cg
-import SKBIlib as skbilib
+import sim, pickleTraj, measure, KBI as kbi, benwatlib
 
 kB = 0.001987
 TempSet = 300.
@@ -65,113 +64,55 @@ def make_clust(Traj, Prefix, Cut, ClustAtom):
     return (bin_centers, bin_vals, bin_errs), clustpickle
 
 
-def make_RKBI(r, gof):
-    N = len(gof)
-    G = np.zeros(N)
-    dx = r[1] - r[0]
-    for i in range(N):
-        x = r[:i]
-        y = (gof[:i] - 1) * x**2.
-        G[i] = 4 * np.pi * dx * np.sum(y)
-    # averaging the running integrals between 10 and 12 A
-    inds = [list(r).index(x) for x in list(r) if x >= 10.0 and x <= 12.0]
-    G_inf = np.mean(G[inds])
-    return G, G_inf
-
-def make_SKBI(Traj, AtomPair):
-    Atomi = AtomDict[AtomPair[0]]
-    Atomj = AtomDict[AtomPair[1]]
-    Trj = pickleTraj(Traj)
-    BoxL = Trj.FrameData['BoxL']
-    
-    StepFreq = 1
-    FrameRange = range(0, len(Trj), StepFreq)
-    NFrames = len(FrameRange)
-    AtomTypes = np.array(Trj.AtomTypes, np.int32)
-    for i in range(len(AtomTypes)):
-        if not isinstance(AtomTypes[i], int):
-            AtomTypes[i] = int(float(Trj.AtomNames[i]))
-    
-    L_s = np.arange(0.05, min(BoxL)/2, 0.01)
-    Ni = np.zeros([NFrames, len(L_s)], np.int32)
-    Nj = np.zeros([NFrames, len(L_s)], np.int32)
-    G = np.zeros(len(L_s))
-    for m, frame in enumerate(FrameRange):
-        Pos = Trj[frame]
-        ni, nj = skbilib.skbi(pos = Pos, boxl = BoxL, cuts = L_s, atomtypes = AtomTypes,
-                              atomtype_i = Atomi, atomtype_j = Atomj)
-        Ni[m, :] = ni
-        Nj[m, :] =  nj
-    
-    mu_i = np.mean(Ni, axis = 0)
-    mu_j = np.mean(Nj, axis = 0)
-    cov_ij = np.mean(Ni*Nj, axis = 0) - mu_i * mu_j
-    V_s = (4/3.) * np.pi*L_s**3
-    G = V_s * (cov_ij / (mu_i * mu_j) - int(Atomi==Atomj)/mu_j)
-    return L_s, G
-    
-    
 def make_KBI(Traj, Prefix, NB, NW):
-    print 'KBI '
+    print 'KBI'
     KBIPickle = Prefix + '.pickle'
     if measure.__isComputed(KBIPickle):
         return pickle.load(open(KBIPickle, 'r')), KBIPickle    
+    
+    kbi.LammpsTraj = Traj
+    kbi.NB = NB ; kbi.NW = NW
+    kbi.Prefix = Prefix
+    print 'RKBI'
+    methods = ['UnCorrected', 'TailCorrected', 'GeomCorrectedExact', 'GeomCorrectedExtrapolated']
+    ret0 = {}
+    for method in methods:
+        ret = kbi.make_RKBI(method)
+        ret0[method] = ret
+    print 'SKBI'
+    ret1 = kbi.make_SKBI()
+    pickle.dump( (ret0, ret1), open(KBIPickle, 'w'))
+    return (ret0, ret1), KBIPickle
 
-    # calculate densities
+
+def make_DensityProfile(Traj, Prefix, NB, NW, StepFreq = 1, NSlice = 50):
+    densityPickle = Prefix + '.pickle'
     measure.LammpsTraj = Traj
+    measure.StepFreq = StepFreq
     measure.__parseFrameData()
-    BoxL = measure.BoxL
-    if isinstance(BoxL, list): BoxL = np.array(BoxL)
-    BoxVol = np.prod(BoxL)
-    rho_B = float(NB) / BoxVol ; rho_W = float(NW) / BoxVol
+    FrameRange = measure.FrameRange ; NFrames = measure.NFrames
+    Trj = measure.Trj
+    BoxL = np.array(measure.BoxL)
+    AtomTypes = [1]*NB + [2]*NW
     
-    # calculate rdfs
-    rdfPrefix = Prefix.split('_KBI')[0]
-    hist_BB, rdfpickle_BB = make_rdf(Traj, rdfPrefix + '_rdf_BB', 'BB')
-    hist_WW, rdfpickle_WW = make_rdf(Traj, rdfPrefix + '_rdf_WW', 'WW')
-    hist_BW, rdfpickle_BW = make_rdf(Traj, rdfPrefix + '_rdf_BW', 'BW')
-    r_BB, g_BB, err_BB = hist_BB
-    r_WW, g_WW, err_WW = hist_WW
-    r_BW, g_BW, err_WW = hist_BW
+    rhoB = np.zeros(NSlice) ; rhoW = np.zeros(NSlice)
+    SubBoxVol = np.prod(BoxL) / NSlice # A^3
+    z = np.linspace(0, BoxL[2], NSlice)
+    
+    pb = sim.utility.ProgressBar('Caclulating density along z axis...', Steps = NFrames)
+    for i, frame in enumerate(FrameRange):
+        Pos = Trj[frame]
+        rhoB, rhoW = benwatlib.slicedensity(pos = Pos, boxl = BoxL, atomtypes = AtomTypes, atomtype_b = 1, atomtype_w = 2, nslice = NSlice)
+        pb.Update(i)
+    
+    # convert numbers to densities
+    Mass_B = 78.11 ; Mass_W = 18.01 # molecular weights in g/mol
+    factor = (10/6.023) # convert particle densities to g/cc
+    rhoB = (rhoB * Mass_B / SubBoxVol) * factor
+    rhoW = (rhoW * Mass_W / SubBoxVol) * factor
+    
+    pickle.dump( (z, rhoB, rhoW), open(densityPickle, 'w'))
 
-    # calculate RKBI
-    RKBI_BB, RKBI_BB_inf = make_RKBI(r_BB, g_BB)
-    RKBI_WW, RKBI_WW_inf = make_RKBI(r_WW, g_WW)
-    RKBI_BW, RKBI_BW_inf = make_RKBI(r_BW, g_BW)
-    R = r_BB
-    
-    #TODO: calculate SKBI and sanity check to make sure we are using the right KBI values
-    # calculate SKBI
-    #SKBI_BB_inf = make_SKBI(Traj, 'BB')
-    #SKBI_WW_inf = make_SKBI(Traj, 'WW')
-    #SKBI_BW_inf = make_SKBI(Traj, 'BW')
-    
-    
-    # final KBI values to calculate thermodynamics
-    # USING RKBI values for now
-    G_BB, G_BB_inf = RKBI_BB, RKBI_BB_inf
-    G_WW, G_WW_inf = RKBI_WW, RKBI_WW_inf
-    G_BW, G_BW_inf = RKBI_BW, RKBI_BW_inf
-    
-    # calculate excess coordination numbers
-    N_BB = rho_B * G_BB ; N_WW = rho_W * G_WW; N_BW = rho_W * G_BW
-    N_BB_inf = rho_B * G_BB_inf ; N_WW_inf = rho_W * G_WW_inf; N_BW_inf = rho_W * G_BW_inf
-    # calculate solvation parameter delta_BW
-    Delta_BW = G_BB_inf + G_WW_inf - 2 * G_BW_inf
-    # calculate dmudx
-    x_B =  float(NB) / (float(NB + NW)) ; x_W = 1.0 - x_B
-    dmudx  = (kB*TempSet) * (x_B * (1 + rho_B * x_W * Delta_BW)) ** (-1.0)
-    # calculate dgammadx
-    dgammadx = - (rho_W * x_B * Delta_BW) * (1 + rho_W * x_B * Delta_BW) ** (-1.0)
-    # output structure
-    ret = {'R': R, 
-           'G_BB': G_BB, 'G_WW': G_WW, 'G_BW': G_BW,
-           'G_BB_inf': G_BB_inf, 'G_WW_inf': G_WW_inf, 'G_BW_inf': G_BW_inf,
-           'N_BB': N_BB, 'N_WW': N_WW, 'N_BW': N_BW,
-           'N_BB_inf': N_BB_inf, 'N_WW_inf': N_WW_inf, 'N_BW_inf': N_BW_inf,
-           'Delta_BW': Delta_BW, 'dmudx': dmudx, 'dgammadx': dgammadx}
-    pickle.dump(ret, open(KBIPickle, 'w'))
-    return ret, KBIPickle
 
 
 ### MAIN ###
@@ -185,7 +126,7 @@ if __name__ == '__main__':
     AtomNames2Types = False 
     if len(sys.argv) > 6: AtomNames2Types = bool(sys.argv[6])
 
-    measure.AtomNames2Types = AtomNames2Types
+    measure.AtomNames2Types = AtomNames2Types ; kbi.AtomNames2Types = AtomNames2Types
     measure.StepFreq = 10
     measure.NBins = 50
     measure.NBlocks = 4

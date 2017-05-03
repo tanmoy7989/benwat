@@ -11,7 +11,7 @@ Prefix = 'KBI_test'
 
 # Traj frames
 Trj = None
-AtomNames2Types = True
+AtomNames2Types = False
 StepFreq = 10
 FrameRange = None
 NFrames = None
@@ -40,7 +40,6 @@ def calcRDF():
     rdf_BB, rdf_BB_pickle = measure.makeRDF(1, 1, Prefix = Prefix + '_rdf_BB_fine_grained')
     rdf_WW, rdf_WW_pickle = measure.makeRDF(2, 2, Prefix = Prefix + '_rdf_WW_fine_grained')
     rdf_BW, rdf_BW_pickle = measure.makeRDF(1, 2, Prefix = Prefix + '_rdf_BW_fine_grained')
-    return rdf_BB, rdf_WW, rdf_BW
     
 
 def make_RKBI(method = 'UnCorrected'):
@@ -54,18 +53,22 @@ def make_RKBI(method = 'UnCorrected'):
     h_BB = np.zeros(NBins) ; h_WW = np.zeros(NBins) ; h_BW = np.zeros(NBins)
     w_BB = lambda i: 1.0 ; w_WW = lambda i: 1.0 ; w_BW = lambda i: 1.0
     G_BB = np.zeros(NBins) ; G_WW = np.zeros(NBins) ; G_BW = np.zeros(NBins)
-    G_BB_inf = 0.0 ; G_WW_inf = 0.0 ; G_BW_inf = 0.0
     
     # extract fine grained RDFs
-    rdf_BB, rdf_WW, rdf_BW = calcRDF()
+    calcRDF()
+    rdf_BB = pickle.load(open(Prefix + '_rdf_BB_fine_grained.pickle', 'r'))
+    rdf_WW = pickle.load(open(Prefix + '_rdf_WW_fine_grained.pickle', 'r'))
+    rdf_BW = pickle.load(open(Prefix + '_rdf_BW_fine_grained.pickle', 'r'))
     r_BB = rdf_BB[0] ; g_BB_0 = rdf_BB[1] ; dr_BB = r_BB[1] - r_BB[0]
     r_WW = rdf_WW[0] ; g_WW_0 = rdf_WW[1] ; dr_WW = r_WW[1] - r_WW[0]
     r_BW = rdf_BW[0] ; g_BW_0 = rdf_BW[1] ; dr_BW = r_BW[1] - r_BW[0]
     
+    tmp_r = r_BB, r_WW, r_BW
+    tmp_g = g_BB_0, g_WW_0, g_BW_0
     
     if method == 'UnCorrected':
         # from definition of KBI for open systems
-        h_BB = g_BB_0 - 1 
+        h_BB = g_BB_0 - 1
         h_WW = g_WW_0 - 1
         h_BW = g_BW_0 - 1
     
@@ -111,20 +114,15 @@ def make_RKBI(method = 'UnCorrected'):
         G_WW[n] = dr_WW * np.sum(4*np.pi * r_WW[:n]**2 * h_WW[:n] * w_WW(n))
         G_BW[n] = dr_BW * np.sum(4*np.pi * r_BW[:n]**2 * h_BW[:n] * w_BW(n))
     
-    # average the KBIs around the correlation length
-    L_corr = 10.5 #A
-    inds_BB = [list(r_BB).index(x) for x in list(r_BB) if x >= L_corr and x <= L_corr + 2.0] ; G_BB_inf = np.mean(G_BB[inds_BB])
-    inds_WW = [list(r_WW).index(x) for x in list(r_WW) if x >= L_corr and x <= L_corr + 2.0] ; G_WW_inf = np.mean(G_WW[inds_WW])
-    inds_BW = [list(r_BW).index(x) for x in list(r_BW) if x >= L_corr and x <= L_corr + 2.0] ; G_BW_inf = np.mean(G_BW[inds_BW])
-        
-    return  ( (r_BB, G_BB), (r_WW, G_WW), (r_BW, G_BW) ),  (G_BB_inf, G_WW_inf, G_BW_inf)
+    return  (r_BB, G_BB), (r_WW, G_WW), (r_BW, G_BW)
 
 
 
 def make_SKBI():
     ''' Calculates finite sized KBIs based on particle fluctuations in subvolumes
     These can be extrpolated to find the true KBI using the method as outlined in
-    Cortes-Huerto, Kremer et.al , JCP, 2016, 145, 141103, Eq (1)'''
+    Cortes-Huerto, Kremer et.al , JCP, 2016, 145, 141103, Eq (1). Loops over frames
+    so need to be saved'''
     global LammpsTraj, NB, NW, Prefix
     global Trj, StepFreq, FrameRange, NFrames, BoxL
     
@@ -136,27 +134,24 @@ def make_SKBI():
     AtomTypes = measure.AtomTypes
     
     # choose a grid of subvolume sizes greater than the correlation length
-    L_corr = 10.0 #A
-    NSubVols = 10
-    NRandIter = 1000
+    L_corr = 12.0 #A
+    NSubVols = 50
     L0 = np.linspace(L_corr, BoxL.min(), NSubVols)
-    
-    G_BB = np.zeros(NSubVols) ; G_WW = np.zeros(NSubVols) ; G_BW = np.zeros(NSubVols)
+    G_BB = np.zeros([NFrames, NSubVols]) ; G_WW = np.zeros([NFrames, NSubVols]) ; G_BW = np.zeros([NFrames, NSubVols])
     
     # frame iteration
     pb = sim.utility.ProgressBar('Calculating SKBI per frame...', Steps = NFrames)
-    for ii, frame in enumerate(FrameRange):
+    for i, frame in enumerate(FrameRange):
         Pos = Trj[frame]
-        for i, this_L0 in enumerate(L0):
-            ret = benwatlib.skbi(pos = Pos, boxl = BoxL, atomtypes = AtomTypes, atomtype_a = 1, atomtype_b = 2, l0 = this_L0,
-                                 randiter = NRandIter)
-            G_BB[i] += ret[0]
-            G_WW[i] += ret[1]
-            G_BW[i] += ret[2]
+        for j, this_L0 in enumerate(L0):
+            G_BB[i,j], G_WW[i,j], G_BW[i,j] = benwatlib.skbi(pos = Pos, boxl = BoxL, atomtypes = AtomTypes, atomtype_b = 1, atomtype_w = 2, l0 = this_L0, randiter = 5000)
+        pb.Update(i)
         
-        pb.Update(ii)
-        
-    G_BB /= NFrames ; G_WW /= NFrames ; G_BW /= NFrames
+    # frame averaging
+    G_BB = np.mean(G_BB, axis = 0)
+    G_WW = np.mean(G_WW, axis = 0)
+    G_BW = np.mean(G_BW, axis = 0)
+    
     return (L0, G_BB, G_WW, G_BW)
                                 
             
@@ -195,14 +190,14 @@ if __name__ == '__main__':
         print '------------------------------'
         
     # plot SKBI
-    L0, G_BB, G_WW, G_BW = make_SKBI()
+    l, G_BB, G_WW, G_BW = make_SKBI()
     fig = plt.figure(facecolor = 'w', edgecolor = 'w')
     ax_BB = fig.add_subplot(3,1,1) ; ax_WW = fig.add_subplot(3,1,2) ; ax_BW = fig.add_subplot(3,1,3)
-    ax_BB.plot(1./L0, G_BB, 'k-', lw = 2, markersize = 10, marker = 'o') ; ax_BB.set_title('BB', fontsize = 15)
-    ax_WW.plot(1./L0, G_WW, 'k-', lw = 2, markersize = 10, marker = 'o') ; ax_WW.set_title('WW', fontsize = 15) 
-    ax_BW.plot(1./L0, G_BW, 'k-', lw = 2, markersize = 10, marker = 'o') ; ax_BW.set_title('BW', fontsize = 15)
+    ax_BB.plot(1./l, G_BB, 'k-', lw = 2, markersize = 10, marker = 'o') ; ax_BB.set_title('BB', fontsize = 15)
+    ax_WW.plot(1./l, G_WW, 'k-', lw = 2, markersize = 10, marker = 'o') ; ax_WW.set_title('WW', fontsize = 15) 
+    ax_BW.plot(1./l, G_BW, 'k-', lw = 2, markersize = 10, marker = 'o') ; ax_BW.set_title('BW', fontsize = 15)
     for ax in [ax_BB, ax_WW, ax_BW]:
-            ax.set_xlabel(r'$1/L (\AA^{-1})$', fontsize = 15)
-            ax.set_ylabel(r'$G(\AA^3)$', fontsize = 15)
+            ax.set_xlabel(r'$1/L_0 (\AA^{-1})$', fontsize = 15)
+            ax.set_ylabel(r'$G$', fontsize = 15)
     
     plt.show()    

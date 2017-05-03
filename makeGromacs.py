@@ -318,7 +318,15 @@ tc-grps = Protein SOL
 tau-t = 0.5 0.5
 ref-t = %(TempSet)g %(TempSet)g
 
-pcoupl = no
+;press-coupling params (Parrinello-Rahman used in Nico's paper)
+nstpcouple = -1
+pcoupl = Parrinello-Rahman
+pcoupltype = isotropic
+tau-p = 3.0 3.0
+ref-p = %(PressSet)g %(PressSet)g
+compressibility = 4.5e-5
+refcoord_scaling = no
+DispCorr = EnerPres
 
 continuation = yes
 gen_vel = no

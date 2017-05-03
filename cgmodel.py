@@ -45,6 +45,12 @@ OptStageNames = None
 LammpsTraj = None
 LangevinGamma = 0.01
 
+# Extended Ensemble approach settings
+doMultiSrel = False
+LammpsTrajList = []
+NBList = []
+NWList = []
+
 # Lammps settings
 sim.export.lammps.LammpsExec = os.path.expanduser('~/mysoftware/tanmoy_lammps/lammps-15May15/src/lmp_ZIN')
 sim.export.lammps.InnerCutoff = 0.02
@@ -171,13 +177,18 @@ def runSrel(Sys, ParamString = None):
     for (i, a) in enumerate(Sys.Atom): Map += [sim.atommap.AtomMap(Atoms1 = i, Atom2 = a)]
 
     Trj = pickleTraj(LammpsTraj, Verbose = False)
-    Opt = sim.srel.OptimizeTrajClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix, Verbose = True)
-    Opt = sim.srel.UseLammps(Opt)
-    sim.srel.optimizetraj.PlotFmt = 'svg'
+    
+    if doMultiSrel:
+        Opt = genMultiOpt(Sys, Map)
+    else:
+        Opt = sim.srel.OptimizeTrajClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix, Verbose = True)
+        Opt = sim.srel.UseLammps(Opt)
+        sim.srel.optimizetraj.PlotFmt = 'svg'
+        Opt.TempFileDir = os.getcwd()
+        Opt.MinReweightFrac = 0.15
+    
     sim.srel.optimizetrajlammps.LammpsStepsMin  = MinSteps
-    Opt.TempFileDir = os.getcwd()
-    Opt.MinReweightFrac = 0.15
-
+    
     # freeze all potentials
     if ParamString: Sys.ForceField.SetParamString(ParamString)
     for P in Sys.ForceField:
@@ -200,12 +211,12 @@ def runSrel(Sys, ParamString = None):
                      'SPLD_BB_WW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BB', 'LD_WW'],
                      'SPLD_BB_BW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BB', 'LD_BW'],
                      'SPLD_BB_WW_BW': ['SP_WW', 'SP_BB', 'SP_BW', 'LD_BB', 'LD_WW', 'LD_BW'],
-                     'All': [P.Name for P in Sys.ForceField if not P is None]}
+                     'SPLD_all': [P.Name for P in Sys.ForceField if not P is None]}
     if OptStageNames is None:
         OptStageNames = ['SP', 'LD_WW', 'LD_BB', 'LD_BW', 'LD_WB',
                          'SPLD_BB', 'SPLD_WW', 'SPLD_BW', 
                          'SPLD_BB_WW', 'SPLD_BB_BW',
-                         'SPLD_BB_WW_BW', 'All']
+                         'SPLD_BB_WW_BW', 'SPLD_all']
 
     # stagewise optimization
     print '\n\n'
@@ -239,14 +250,14 @@ def runSrel(Sys, ParamString = None):
 
 
 
-def runMD(Sys, ParamString, MDPrefix = None, useParallel = False, NCores = 1):
+def runMD(Sys, ParamString, MDPrefix = None, BoxL = None, useParallel = False, NCores = 1, autoSubmit = True):
     global LammpsTraj, Prefix, TempSet
     global MinSteps, EquilSteps, ProdSteps, StepFreq
     
-    if LammpsTraj:
-        Trj = pickleTraj(LammpsTraj, Verbose = False)
-        Sys.BoxL = Trj.FrameData['BoxL']
-        Sys.Arrays.Pos = Trj[0]
+    if LammpsTraj is None:
+        if not BoxL is None:
+            Sys.BoxL = BoxL
+            sim.system.init.positions.CubicLatticeFill(Sys, Random = 0.1)
     
     Sys.ForceField.SetParamString(ParamString)
     
@@ -259,38 +270,42 @@ def runMD(Sys, ParamString, MDPrefix = None, useParallel = False, NCores = 1):
     # parallelization settings
     sim.export.lammps.useParallel = useParallel
     sim.export.lammps.NCores = NCores
+    sim.export.lammps.autoSubmit = autoSubmit
     
-    ModTraj, ModTrajFile = sim.export.lammps.MakeLammpsTraj(Sys, Prefix = MDPrefix, TrajFile = ".lammpstrj.gz",
-                                                            NStepsMin = MinSteps, NStepsEquil = EquilSteps, 
-                                                            NStepsProd = ProdSteps, WriteFreq = StepFreq,
-                                                            Verbose = True)
-    return ModTraj, ModTrajFile
- 
+    # increase time-step to 2 fs (default is 1 fs)
+    Sys.Int.Method.TimeStep *= 2
+    
+    ret = sim.export.lammps.MakeLammpsTraj(Sys, Prefix = MDPrefix, TrajFile = ".lammpstrj.gz",
+                                           NStepsMin = MinSteps, NStepsEquil = EquilSteps, 
+                                           NStepsProd = ProdSteps, WriteFreq = StepFreq,
+                                           Verbose = True)
+    if not ret is None:
+        ret = ModTraj, ModTrajFile
+        return ModTraj, ModTrajFile
 
-
-#TODO: correct this routine
+  
 def genMultiOpt(Sys, Map):
-	global BoxL, LammpsTraj
-
-	if not MultiLammpsTraj or not MultiNBList or not MultiNWList:
+	global LammpsTrajList, NBList, NWList, Prefix
+	if not (LammpsTrajList or not NBList or not NWList):
 		raise IOError('Need more information to generate multi Opt object')
 
 	Opts = []
-	for i, Traj in enumerate(MultiLammpsTraj):
-		NB = MultiNBList[i]
-		NW = MultiNWList[i]
-		print '\nGenerating CG system for NB = %d, NW = %d from extended ensemble\n' % (NB, NW)
-    	LammpsTraj = Traj
-    	Trj = pickleTraj(LammpsTraj, Verbose = False)
-    	BoxL = pickleTraj(LammpsTraj).FrameData['BoxL']
+	for i, Traj in enumerate(LammpsTrajList):
+		NB = NBList[i]
+		NW = NWList[i]
+		print '\nGenerating optimizer object for NB = %d, NW = %d' % (NB, NW)
+    	Trj = pickleTraj(Traj, Verbose = False)
+    	BoxL = pickleTraj(Traj).FrameData['BoxL']
     	Sys.ScaleBox(BoxL)
-    	Opt = sim.srel.OptimizeTrajLammpsClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
+    	Opt = sim.srel.OptimizeTrajClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
+    	Opt = sim.srel.UseLammps(Opt)
     	sim.srel.optimizetraj.PlotFmt = 'svg'
+    	Opt.TempFileDir = os.getcwd()
+        Opt.MinReweightFrac = 0.15
+    	
     	Opts.append(Opt)
 
 	del Opt
-	Weights = [1.]*len(Opts) #TODO
-	MultiOpt = sim.srel.OptimizeMultiTrajClass(OptimizeTrajList = Opts, Weights = Weights,
-											   FilePrefix = Prefix + '_multi')
-
+	Weights = [1.]*len(Opts) # for starters give equal weight to all concentrations
+	MultiOpt = sim.srel.OptimizeMultiTrajClass(OptimizeTrajList = Opts, Weights = Weights, FilePrefix = Prefix)
 	return MultiOpt
