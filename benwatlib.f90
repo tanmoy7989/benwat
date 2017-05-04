@@ -34,7 +34,7 @@ SUBROUTINE SKBI(Pos, BoxL, NAtom, AtomTypes, AtomType_B, AtomType_W, L0, RandIte
         END DO
     END DO
     
-    ! calculate KBIs from particle flcutuations
+    ! calculate KBIs from particle fluctuations
     muB = SUM(NB) / RandIter
     muW = SUM(NW) / RandIter
     muBB = SUM(NB*NB) / RandIter
