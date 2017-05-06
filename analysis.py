@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import os, sys, numpy as np, cPickle as pickle
-import sim, pickleTraj, measure, benwatlib
+import sim, pickleTraj, measure, benwatlib, cgmodel as cg
 
 kB = 0.001987
 TempSet = 300.
@@ -69,7 +69,7 @@ def make_clust(Traj, Prefix, Cut, ClustAtom):
     return (bin_centers, bin_vals, bin_errs), clustpickle
 
 
-def make_RKBI(Traj, Prefix, NB, NW, method = 'UnCorrected'):
+def make_RKBI(Traj, Prefix, NB, NW, RDFPrefix = None, method = 'UnCorrected'):
     ''' Families of formulae that directly integrate the rdf from definition.
     Corrects the g(r) or its integration based on heuristic formulae.'''
     ## Note: error bar calculation not supported currently
@@ -87,37 +87,36 @@ def make_RKBI(Traj, Prefix, NB, NW, method = 'UnCorrected'):
     measure.NBins = NBins
     
     # extract fine grained RDFs
-    rdf_BB, rdf_BB_pickle = measure.makeRDF(1, 1, Prefix = Prefix + '_rdf_BB_fine_grained')
-    rdf_WW, rdf_WW_pickle = measure.makeRDF(2, 2, Prefix = Prefix + '_rdf_WW_fine_grained')
-    rdf_BW, rdf_BW_pickle = measure.makeRDF(1, 2, Prefix = Prefix + '_rdf_BW_fine_grained')
-    r_BB = rdf_BB[0] ; g_BB_0 = rdf_BB[1] ; dr_BB = r_BB[1] - r_BB[0]
-    r_WW = rdf_WW[0] ; g_WW_0 = rdf_WW[1] ; dr_WW = r_WW[1] - r_WW[0]
-    r_BW = rdf_BW[0] ; g_BW_0 = rdf_BW[1] ; dr_BW = r_BW[1] - r_BW[0]
+    if RDFPrefix is None: RDFPrefix = 'NB%dNW%d' % (NB, NW)
+    rdf_BB, rdf_BB_pickle = measure.makeRDF(1, 1, Prefix = RDFPrefix + '_rdf_BB_fine_grained')
+    rdf_WW, rdf_WW_pickle = measure.makeRDF(2, 2, Prefix = RDFPrefix + '_rdf_WW_fine_grained')
+    rdf_BW, rdf_BW_pickle = measure.makeRDF(1, 2, Prefix = RDFPrefix + '_rdf_BW_fine_grained')
+    r_BB = rdf_BB[0] ; g_BB = rdf_BB[1] ; dr_BB = r_BB[1] - r_BB[0]
+    r_WW = rdf_WW[0] ; g_WW = rdf_WW[1] ; dr_WW = r_WW[1] - r_WW[0]
+    r_BW = rdf_BW[0] ; g_BW = rdf_BW[1] ; dr_BW = r_BW[1] - r_BW[0]
     
     # initialize all arrays
     h_BB = np.zeros(NBins) ; h_WW = np.zeros(NBins) ; h_BW = np.zeros(NBins)
     w_BB = lambda i: 1.0 ; w_WW = lambda i: 1.0 ; w_BW = lambda i: 1.0
     G_BB = np.zeros(NBins) ; G_WW = np.zeros(NBins) ; G_BW = np.zeros(NBins)
-    tmp_r = r_BB, r_WW, r_BW
-    tmp_g = g_BB_0, g_WW_0, g_BW_0
     
     if method == 'UnCorrected':
         # from definition of KBI for open systems
-        h_BB = g_BB_0 - 1
-        h_WW = g_WW_0 - 1
-        h_BW = g_BW_0 - 1
+        h_BB = g_BB - 1
+        h_WW = g_WW - 1
+        h_BW = g_BW - 1
     
     elif method == 'TailCorrected':
         # Ganguly, van der Vegt et. al, JCTC, 2013, 9, 1347-1355, Eq (5)
         rho_B = float(NB) / np.prod(BoxL) ; rho_W = float(NW) / np.prod(BoxL)
-        DeltaN_BB = rho_B * np.array( [ dr_BB * np.sum(4*np.pi * r_BB[:i]**2. * (g_BB_0[:i]-1)) for i in range(NBins) ] )
-        DeltaN_WW = rho_W * np.array( [ dr_WW * np.sum(4*np.pi * r_WW[:i]**2. * (g_WW_0[:i]-1)) for i in range(NBins) ] )
-        DeltaN_BW = rho_W * np.array( [ dr_BW * np.sum(4*np.pi * r_BW[:i]**2. * (g_BW_0[:i]-1)) for i in range(NBins) ] )
+        DeltaN_BB = rho_B * np.array( [ dr_BB * np.sum(4*np.pi * r_BB[:i]**2. * (g_BB[:i]-1)) for i in range(NBins) ] )
+        DeltaN_WW = rho_W * np.array( [ dr_WW * np.sum(4*np.pi * r_WW[:i]**2. * (g_WW[:i]-1)) for i in range(NBins) ] )
+        DeltaN_BW = rho_W * np.array( [ dr_BW * np.sum(4*np.pi * r_BW[:i]**2. * (g_BW[:i]-1)) for i in range(NBins) ] )
         Bulk_B = NB - rho_B * (4/3.)*np.pi * r_BB**3.
         Bulk_W = NW - rho_W * (4/3.)*np.pi * r_WW**3.
-        h_BB = g_BB_0 * Bulk_B / (Bulk_B - DeltaN_BB - 1) - 1
-        h_WW = g_WW_0 * Bulk_W / (Bulk_W - DeltaN_WW - 1) - 1
-        h_BW = g_BW_0 * Bulk_W / (Bulk_W - DeltaN_BW) - 1
+        h_BB = g_BB * Bulk_B / (Bulk_B - DeltaN_BB - 1) - 1
+        h_WW = g_WW * Bulk_W / (Bulk_W - DeltaN_WW - 1) - 1
+        h_BW = g_BW * Bulk_W / (Bulk_W - DeltaN_BW) - 1
         
     elif method == 'GeomCorrectedExact':
         # Krueger, Schenll et. al, J.Phys.Chem.Lett, 2013, 4, 235-238, Eqn (6)
@@ -127,9 +126,9 @@ def make_RKBI(Traj, Prefix, NB, NW, method = 'UnCorrected'):
         w_BB = lambda i: (1 - 1.5 * x_BB[i] + 0.5 * x_BB[i]**3.)
         w_WW = lambda i: (1 - 1.5 * x_WW[i] + 0.5 * x_WW[i]**3.)
         w_BW = lambda i: (1 - 1.5 * x_BW[i] + 0.5 * x_BW[i]**3.)
-        h_BB = g_BB_0 - 1
-        h_WW = g_WW_0 - 1
-        h_BW = g_BW_0 - 1
+        h_BB = g_BB - 1
+        h_WW = g_WW - 1
+        h_BW = g_BW - 1
     
     elif method == 'GeomCorrectedExtrapolated':
         # Krueger, Schenll et. al, J.Phys.Chem.Lett, 2013, 4, 235-238, Eqn (7)
@@ -139,9 +138,9 @@ def make_RKBI(Traj, Prefix, NB, NW, method = 'UnCorrected'):
         w_BB = lambda i: (1 - x_BB[i]**3.)
         w_WW = lambda i: (1 - x_WW[i]**3.)
         w_BW = lambda i: (1 - x_BW[i]**3.)
-        h_BB = g_BB_0 - 1
-        h_WW = g_WW_0 - 1
-        h_BW = g_BW_0 - 1
+        h_BB = g_BB - 1
+        h_WW = g_WW - 1
+        h_BW = g_BW - 1
     
     # integrate
     for n in range(1, NBins):
@@ -179,7 +178,7 @@ def make_SKBI(Traj, Prefix, NB, NW, L_corr = 12.0, NSubVols = 50, RandIter = 500
     
     # initialize all arrays
     G_BB_frame = np.zeros([NFrames, NSubVols]) ; G_WW_frame = np.zeros([NFrames, NSubVols]) ; G_BW_frame = np.zeros([NFrames, NSubVols])
-    G_BB_block = np.zeros([NSubVols, NBlocks]) ; G_WW_block = np.zeros([NFrames, NSubVols]) ; G_BW_block = np.zeros([NSubVols, NBlocks])
+    G_BB_block = np.zeros([NSubVols, NBlocks]) ; G_WW_block = np.zeros([NSubVols, NBlocks]) ; G_BW_block = np.zeros([NSubVols, NBlocks])
     G_BB = np.zeros(NSubVols) ; G_WW = np.zeros(NSubVols) ; G_BW = np.zeros(NSubVols)
     G_BB_err = np.zeros(NSubVols) ; G_WW_err = np.zeros(NSubVols) ; G_BW_err = np.zeros(NSubVols)
     
@@ -197,9 +196,9 @@ def make_SKBI(Traj, Prefix, NB, NW, L_corr = 12.0, NSubVols = 50, RandIter = 500
     for b in range(NBlocks):
         if NBlocks > 1: print 'Block: ', b
         start = b * BlockSize ; stop = (b+1) * BlockSize
-        G_BB_block[:, b] = np.mean(G_BB_frame[start:stop, :])
-        G_WW_block[:, b] = np.mean(G_WW_frame[start:stop, :])
-        G_BW_block[:, b] = np.mean(G_BW_frame[start:stop, :])
+        G_BB_block[:, b] = np.mean(G_BB_frame[start:stop, :], axis = 0)
+        G_WW_block[:, b] = np.mean(G_WW_frame[start:stop, :], axis = 0)
+        G_BW_block[:, b] = np.mean(G_BW_frame[start:stop, :], axis = 0)
     
     # output structure
     G_BB = np.mean(G_BB_block, axis = 1); G_WW = np.mean(G_WW_block, axis = 1) ; G_BW = np.mean(G_BW_block, axis = 1)
@@ -229,8 +228,8 @@ def make_DensityProfile(Traj, Prefix, NB, NW, NSlice = 50):
     
     # initialize all arrays
     rhoB_frame = np.zeros([NFrames, NSlice], np.float64) ; rhoW_frame = np.zeros([NFrames, NSlice])
-    rhoB_block = np.zeros([NSlice, NBlocks]) ; rhowW_block = np.zeros([NSlice, NBlocks])
-    rhoB = np.zeros(NSlice) ; rhowW = np.zeros(NSlice)
+    rhoB_block = np.zeros([NSlice, NBlocks]) ; rhoW_block = np.zeros([NSlice, NBlocks])
+    rhoB = np.zeros(NSlice) ; rhoW = np.zeros(NSlice)
     errB = np.zeros(NSlice) ; errW = np.zeros(NSlice)
     
     # frame iteration
@@ -240,7 +239,7 @@ def make_DensityProfile(Traj, Prefix, NB, NW, NSlice = 50):
     pb = sim.utility.ProgressBar('Caclulating density along z axis...', Steps = NFrames)
     for i, frame in enumerate(FrameRange):
         Pos = Trj[frame]
-        rhoB_frame[i,:], rhoW[i,:] = benwatlib.slicedensity(pos = Pos, boxl = BoxL, atomtypes = AtomTypes, atomtype_b = 1, atomtype_w = 2, nslice = NSlice)
+        rhoB_frame[i,:], rhoW_frame[i,:] = benwatlib.slicedensity(pos = Pos, boxl = BoxL, atomtypes = AtomTypes, atomtype_b = 1, atomtype_w = 2, nslice = NSlice)
         pb.Update(i)
     
     # convert numbers to densities
@@ -265,20 +264,63 @@ def make_DensityProfile(Traj, Prefix, NB, NW, NSlice = 50):
     
     ret = ( (z, rhoB, errB), (z, rhoW, errW) )
     pickle.dump(ret, open(densityPickle, 'w'))
-    return ret, densityIPickle
+    return ret, densityPickle
 
 
-def make_Widom(Traj, Prefix, NB, NW, StepFreq = 1, RandIter = 100):
+def make_Widom(Traj, Prefix, NB, NW, ff, StepFreq = 1, RandIter = 100):
+    ''' calculate excess chemical potential by random particle insertion'''
+    WidomPickle = Prefix + '.pickle'
+    if measure.__isComputed(WidomPickle):
+        return pickle.load(open(WidomPickle, 'r')), WidomPickle
+        
     # make trial system
     cg.NB = NB ; cg.NW = NW
     cg.LDCutBB = 7.5 ; cg.LDCutWW = 3.5
     cg.LDCutBW = 0.5 * (7.5+3.5) ; cg.LDCutWB = cg.LDCutBW
-    Sys = cg.makeSys()
+    SysB = cg.makeSys() ; SysB.ForceField.SetParamString(ff)
+    SysW = cg.makeSys() ; SysW.ForceField.SetParamString(ff)
     
-    # extract details of system
+    # insert phantom particle
+    testB = SysB.World[0] ; testW = SysW.World[1]
+    SysB += testB ; SysW += testW
+    
+    # extract details of traj
     measure.LammpsTraj = Traj
-    measure.__prep
+    measure.__parseFrameData()
+    FrameRange = measure.FrameRange ; NFrames = measure.NFrames ; NBlocks = measure.NBlocks
+    Trj = measure.Trj
+    BoxL = measure.BoxL ; BoxHi = Trj.FrameData['BoxHi'] ; BoxLo = Trj.FrameData['BoxLo']
     
+    # frame iteration to calculate exp(-beta * Delta U)
+    beta = 1. / (0.001987 * 300.0)
+    exptermB = np.zeros(NFrames * RandIter) ; exptermW = np.zeros(NFrames * RandIter)
+    LowerBound = 1.-3
+    n = 0
+    pb = sim.utility.ProgressBar('Caclulating test particle energies...', Steps = NFrames)
+    for i, frame in enumerate(FrameRange):
+        Pos = Trj[frame]
+        SysB.Arrays.Pos[0: -1] = Pos ; SysW.Arrays.Pos[0: -1] = Pos
+        for j in range(RandIter):
+            testBPos = np.array([ BoxLo[i] + BoxL[i]*np.random.random() for i in [0,1,2] ])
+            SysB.ForceField.Eval(ANumList = [NB+NW+1])
+            exptermB[n] = np.exp(-beta * SysB.PEnergy)
+            if not LowerBound is None and (np.isnan(exptermB[n]) or exptermB[n] < LowerBound): exptermB[n] = 0
+        
+            testWPos = np.array([ BoxLo[i] + BoxL[i]*np.random.random() for i in [0,1,2] ] )
+            SysW.ForceField.Eval(ANumList = [NB+NW+1])
+            exptermW[n] = np.exp(-beta * SysW.PEnergy)
+            if not LowerBound is None and (np.isnan(exptermW[n]) or exptermW[n] < LowerBound): exptermW[n] = 0
+            
+            n += 1
+        
+    # TODO: block average
+    measure.Normalize = False
+    histB = measure.makeHist(exptermB) ; histW = measure.makeHist(exptermW)
+    muB = -beta * np.log( np.sum(histB[1]) / np.sum(histB[0]) )
+    muW = -beta * np.log( np.sum(histW[1]) / np.sum(histW[0]) )
+    
+    ret = (histB, histW, muB, muW)
+    pickle.dump(ret, open(WidomPickle, 'w'))
     
     
 
@@ -293,6 +335,9 @@ if __name__ == '__main__':
     NW = int(sys.argv[5])
     AtomNames2Types = False 
     if len(sys.argv) > 6: AtomNames2Types = bool(sys.argv[6])
+    if len(sys.argv) > 7:
+        ff_file = os.path.abspath(sys.argv)
+        ff = file(ff_file).read()
 
     measure.AtomNames2Types = AtomNames2Types
     measure.StepFreq = 10
@@ -314,11 +359,13 @@ if __name__ == '__main__':
     make_ld(LammpsTraj, FilePrefix + '_ld_WW', 'WW', LDCut_WW)
     make_ld(LammpsTraj, FilePrefix + '_ld_BW', 'BW', LDCut_BW)
     make_ld(LammpsTraj, FilePrefix + '_ld_WB', 'WB', LDCut_WB)
-    for method in ['UnCorrected', 'TailCorrected', 'GeomCorrected', 'GeomCorrectedExtrapolated']:
-        make_RKBI(LammpsTraj, '%s_RKBI_%s' % (FilePrefix, method), NB, NW)
+    for method in ['UnCorrected', 'TailCorrected', 'GeomCorrectedExact', 'GeomCorrectedExtrapolated']:
+        make_RKBI(LammpsTraj, '%s_RKBI_%s' % (FilePrefix, method), NB, NW, method = method)
     
-    #measure.StepFreq = 1000 # trying out to speed things up
-    #make_SKBI(LammpsTraj, FilePrefix+'_SKBI', NB, NW)
+    if not LammpsTraj.__contains__('SP') or NB == 10:
+        measure.NBlocks = 4
+        measure.StepFreq = 50
+        make_SKBI(LammpsTraj, FilePrefix+'_SKBI', NB, NW)
 
     
     

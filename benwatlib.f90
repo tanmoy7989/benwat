@@ -62,11 +62,11 @@ SUBROUTINE SLICEDENSITY(Pos, BoxL, NAtom, AtomTypes, AtomType_B, AtomType_W, rho
     invBoxL = MERGE(1.d0/BoxL, 0.d0, BoxL > 0.d0)
     
     DO iter = 0, NSlice-1
-        z0 = 0.d0 + dz*iter
+        z0 = 0.5 * (0.d0 + dz*iter)
         DO i = 0, NAtom-1
             zi = Pos(i,2) - z0
             zi = zi - BoxL(2) * DNINT(invBoxL(2) * zi) ! reimage along Z axis
-            IF (ABS(zi-z0) <= dz) THEN
+            IF ( ABS(zi-z0) <= 0.5 * dz) THEN
                 IF (AtomTypes(i) == AtomType_B) rhoB(iter) = rhoB(iter) + 1
                 IF (AtomTypes(i) == AtomType_W) rhoW(iter) = rhoW(iter) + 1
             END IF

@@ -151,6 +151,7 @@ def mapTrj(InTraj, OutTraj =  None):
 	AtomTypes = [1]*NB + [2]*NW
 	Trj = pickleTraj(InTraj)
 	BoxL = Trj.FrameData['BoxL']
+	print BoxL
 	if OutTraj is None: OutTraj = InTraj.split('.lammpstrj.gz')[0] + '_mapped.lammpstrj.gz'
 	MappedTrj = sim.traj.Mapped(Trj, Map, AtomNames = AtomTypes, BoxL = BoxL)
 	sim.traj.Convert(MappedTrj, sim.traj.LammpsWrite, OutTraj, Verbose = True)
