@@ -52,7 +52,7 @@ NBList = []
 NWList = []
 
 # Lammps settings
-sim.export.lammps.LammpsExec = os.path.expanduser('~/mysoftware/tanmoy_lammps/lammps-15May15/src/lmp_ZIN')
+sim.export.lammps.LammpsExec = 'lmp_mpich2'
 sim.export.lammps.InnerCutoff = 0.02
 sim.srel.base.DiffEneFracTol = 0.1 #increase tolerance to prevent sim-Lammps mismatch blowing up the srel run
 
@@ -107,11 +107,15 @@ def makeSys():
                        				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BW", Filter = FilterBW_ordered)
     if not LDCutWB is None: LD_WB = LD(Sys, Cut = LDCutWB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots,
                        				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
-    # only BB spline if dry benzene
-    if not NW: SP_WW = LD_WW = LD_BW = LD_WB = None
+    
+    # only BB spline and BB local density if dry benzene
+    if not NW: SP_WW = SP_BW = LD_WW = LD_BW = LD_WB = None
+
+    # only WW spline and WW local density if pure water
+    if not NB: SP_BB = SP_BW = LD_BB = LD_BW = LD_WB = None
 
     for P in [SP_BB, SP_WW, SP_BW, LD_BB, LD_WW, LD_BW, LD_WB]:
-        if P: Sys.ForceField.extend([P])
+        if not P is None: Sys.ForceField.extend([P])
     for P in Sys.ForceField: P.Arg.SetupHist(NBin = 10000, ReportNBin = 100)
 
     # system setup
@@ -131,10 +135,12 @@ def makeSys():
 
     ## other settings based on previous trial runs
     if ManageInnerCore:
-        SP_BB.EneInner = "50kT"
-        SP_BB.EneSlopeInner = None
-        SP_BW.KnotMinHistFrac = 0.01
-        SP_BB.KnotMinHistFracInner = 0.0
+        if SP_BB:
+            SP_BB.EneInner = "50kT"
+            SP_BB.KnotMinHistFracInner = 0.0
+            SP_BB.EneSlopeInner = None
+        if SP_BW:
+            SP_BW.KnotMinHistFrac = 0.01
                     
     return Sys
 
@@ -167,6 +173,7 @@ def ResetForceField(Sys, OptStage):
 
 
 def runSrel(Sys, ParamString = None):
+    # do not use this routine to CG pure benzene or pure water !
     global NB, NW
     global LDCutBB, LDCutBW, LDCutWB, LDCutWW, BoxL
     global LammpsTraj, Prefix
@@ -286,27 +293,24 @@ def runMD(Sys, ParamString, MDPrefix = None, BoxL = None, useParallel = False, N
 
   
 def genMultiOpt(Sys, Map):
-	global LammpsTrajList, NBList, NWList, Prefix
-	if not (LammpsTrajList or not NBList or not NWList):
-		raise IOError('Need more information to generate multi Opt object')
-
-	Opts = []
-	for i, Traj in enumerate(LammpsTrajList):
-		NB = NBList[i]
-		NW = NWList[i]
-		print '\nGenerating optimizer object for NB = %d, NW = %d' % (NB, NW)
-    	Trj = pickleTraj(Traj, Verbose = False)
-    	BoxL = pickleTraj(Traj).FrameData['BoxL']
-    	Sys.ScaleBox(BoxL)
-    	Opt = sim.srel.OptimizeTrajClass(Sys, Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = Prefix)
-    	Opt = sim.srel.UseLammps(Opt)
-    	sim.srel.optimizetraj.PlotFmt = 'svg'
-    	Opt.TempFileDir = os.getcwd()
+    global LammpsTrajList, NBList, NWList, Prefix
+    if not (LammpsTrajList or not NBList or not NWList):
+        raise IOError('Need more information to generate multi Opt object')
+    
+    Opts = []
+    for i, Traj in enumerate(LammpsTrajList):
+        NB = NBList[i] ; NW = NWList[i]
+        print '\nGenerating optimizer object for NB = %d, NW = %d' % (NB, NW)
+        Trj = pickleTraj(Traj, Verbose = False)
+        BoxL = pickleTraj(Traj).FrameData['BoxL']
+        Sys.ScaleBox(BoxL)
+        Opt = sim.srel.OptimizeTrajClass(ModSys = Sys, Map = Map, Traj = Trj, SaveLoadArgData = True, FilePrefix = '%s_NB%dNW%d' % (Prefix, NB, NW))
+        Opt = sim.srel.UseLammps(Opt)
+        sim.srel.optimizetraj.PlotFmt = 'svg'
+        Opt.TempFileDir = os.getcwd()
         Opt.MinReweightFrac = 0.15
-    	
-    	Opts.append(Opt)
-
-	del Opt
-	Weights = [1.]*len(Opts) # for starters give equal weight to all concentrations
-	MultiOpt = sim.srel.OptimizeMultiTrajClass(OptimizeTrajList = Opts, Weights = Weights, FilePrefix = Prefix)
-	return MultiOpt
+        Opts.append(Opt)
+    
+    Weights = [1.]*len(Opts) # for starters give equal weight to all concentrations
+    MultiOpt = sim.srel.OptimizeMultiTrajClass(OptimizeTrajList = Opts, Weights = Weights, FilePrefix = Prefix)
+    return MultiOpt

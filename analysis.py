@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import os, sys, numpy as np, cPickle as pickle
-import sim, pickleTraj, measure, benwatlib, cgmodel as cg
+import sim, pickleTraj, measure, benwatlib, cgmodel as cg, parse_potential as pp 
 
 kB = 0.001987
 TempSet = 300.
@@ -227,6 +227,10 @@ def make_DensityProfile(Traj, Prefix, NB, NW, NSlice = 50):
     AtomTypes = measure.AtomTypes
     
     # initialize all arrays
+    zB_frame = np.zeros([NFrames, NSlice], np.float64) ; zW_frame = np.zeros([NFrames, NSlice], np.float64)
+    zB_block = np.zeros([NSlice, NBlocks], np.float64) ; zW_block = np.zeros([NSlice, NBlocks], np.float64)
+    zB = np.zeros(NSlice) ; zW = np.zeros(NSlice)
+    
     rhoB_frame = np.zeros([NFrames, NSlice], np.float64) ; rhoW_frame = np.zeros([NFrames, NSlice])
     rhoB_block = np.zeros([NSlice, NBlocks]) ; rhoW_block = np.zeros([NSlice, NBlocks])
     rhoB = np.zeros(NSlice) ; rhoW = np.zeros(NSlice)
@@ -240,6 +244,12 @@ def make_DensityProfile(Traj, Prefix, NB, NW, NSlice = 50):
     for i, frame in enumerate(FrameRange):
         Pos = Trj[frame]
         rhoB_frame[i,:], rhoW_frame[i,:] = benwatlib.slicedensity(pos = Pos, boxl = BoxL, atomtypes = AtomTypes, atomtype_b = 1, atomtype_w = 2, nslice = NSlice)
+        
+        # shift z so that interface is at zero
+        rhoB_avg = 0.876 / 2 ; rhoW_avg = 1.0 / 2
+        indB = np.abs(rhoB_frame[i,:] - rhoB_avg).argmin() ; indW = np.abs(rhoW_frame[i,:] - rhoW_avg).argmin()
+        zB_frame[i,:] = z - z[indB] ; zW_frame[i,:] = z - z[indW]
+        
         pb.Update(i)
     
     # convert numbers to densities
@@ -253,76 +263,74 @@ def make_DensityProfile(Traj, Prefix, NB, NW, NSlice = 50):
     for b in range(NBlocks):
         if NBlocks > 1: print 'Block: ', b
         start = b * BlockSize ; stop = (b+1) * BlockSize
+        zB_block[:, b] = np.mean(zB_frame[start:stop], axis = 0)
+        zW_block[:, b] = np.mean(zW_frame[start:stop], axis = 0)
         rhoB_block[:, b] = np.mean(rhoB_frame[start:stop], axis = 0)
         rhoW_block[:, b] = np.mean(rhoW_frame[start:stop], axis = 0)
     
     # output structure
-    rhoB = np.mean(rhoB_block, axis = 1); rhoW = np.mean(rhoW_block, axis = 1)
+    zB = np.mean(zB_block, axis = 1) ; zW = np.mean(zW_block, axis = 1)
+    rhoB = np.mean(rhoB_block, axis = 1) ; rhoW = np.mean(rhoW_block, axis = 1)
     if NBlocks > 1:
         errB = np.std(rhoB_block, axis = 1, ddof = 1)
         errW = np.std(rhoW_block, axis = 1, ddof = 1)
     
-    ret = ( (z, rhoB, errB), (z, rhoW, errW) )
+    ret = ( (zB, rhoB, errB), (zW, rhoW, errW) )
     pickle.dump(ret, open(densityPickle, 'w'))
     return ret, densityPickle
 
 
-def make_Widom(Traj, Prefix, NB, NW, ff, StepFreq = 1, RandIter = 100):
+def make_TPI(Traj, Prefix, NB, NW, FF_File, TPType = 'B', StepFreq = 1, RandIter = 10000, RandSeed = 84321, LastNFrames = 2000):
     ''' calculate excess chemical potential by random particle insertion'''
-    WidomPickle = Prefix + '.pickle'
-    if measure.__isComputed(WidomPickle):
-        return pickle.load(open(WidomPickle, 'r')), WidomPickle
+    print 'Excess mu by Widom insertion'
+    TPIPickle = Prefix + '.pickle'
+    if measure.__isComputed(TPIPickle):
+        return pickle.load(open(TPIPickle, 'r')), TPIPickle
         
     # make trial system
     cg.NB = NB ; cg.NW = NW
     cg.LDCutBB = 7.5 ; cg.LDCutWW = 3.5
     cg.LDCutBW = 0.5 * (7.5+3.5) ; cg.LDCutWB = cg.LDCutBW
-    SysB = cg.makeSys() ; SysB.ForceField.SetParamString(ff)
-    SysW = cg.makeSys() ; SysW.ForceField.SetParamString(ff)
+    Sys = cg.makeSys() ; pp.loadParam(Sys, FF_File)
     
     # insert phantom particle
-    testB = SysB.World[0] ; testW = SysW.World[1]
-    SysB += testB ; SysW += testW
+    TP = Sys.World[AtomDict[TPType]-1]
+    Sys += TP
     
     # extract details of traj
     measure.LammpsTraj = Traj
     measure.__parseFrameData()
-    FrameRange = measure.FrameRange ; NFrames = measure.NFrames ; NBlocks = measure.NBlocks
-    Trj = measure.Trj
+    FrameRange = measure.FrameRange ; NFrames = measure.NFrames
+    Trj = measure.Trj[0]
     BoxL = measure.BoxL ; BoxHi = Trj.FrameData['BoxHi'] ; BoxLo = Trj.FrameData['BoxLo']
     
-    # frame iteration to calculate exp(-beta * Delta U)
+    # reseed the random number generator
+    np.random.seed(RandSeed)
+    
+    # frame iteration to calculate DeltaU, exp(-beta * DeltaU)
+    if NW == 0: print 'Inserting %s into pure B, NB = %d' % (TPType, NB)
+    if NB == 0: print 'Inserting %s into pure W, NW = %d' % (TPType, NW)
     beta = 1. / (0.001987 * 300.0)
-    exptermB = np.zeros(NFrames * RandIter) ; exptermW = np.zeros(NFrames * RandIter)
-    LowerBound = 1.-3
-    n = 0
+    DeltaU = np.zeros([NFrames], np.float64)
+    expterm = np.zeros([NFrames], np.float64)
     pb = sim.utility.ProgressBar('Caclulating test particle energies...', Steps = NFrames)
     for i, frame in enumerate(FrameRange):
         Pos = Trj[frame]
-        SysB.Arrays.Pos[0: -1] = Pos ; SysW.Arrays.Pos[0: -1] = Pos
+        Sys.Arrays.Pos[0: -1] = Pos
         for j in range(RandIter):
-            testBPos = np.array([ BoxLo[i] + BoxL[i]*np.random.random() for i in [0,1,2] ])
-            SysB.ForceField.Eval(ANumList = [NB+NW+1])
-            exptermB[n] = np.exp(-beta * SysB.PEnergy)
-            if not LowerBound is None and (np.isnan(exptermB[n]) or exptermB[n] < LowerBound): exptermB[n] = 0
+            testPos = np.array([ BoxLo[i] + BoxL[i]*np.random.random() for i in [0,1,2] ])
+            Sys.ForceField.Eval(ANumList = [NB+NW+1])
+            DeltaU[i] += Sys.PEnergy
+            expterm[i] += np.exp(-beta * Sys.PEnergy)
         
-            testWPos = np.array([ BoxLo[i] + BoxL[i]*np.random.random() for i in [0,1,2] ] )
-            SysW.ForceField.Eval(ANumList = [NB+NW+1])
-            exptermW[n] = np.exp(-beta * SysW.PEnergy)
-            if not LowerBound is None and (np.isnan(exptermW[n]) or exptermW[n] < LowerBound): exptermW[n] = 0
-            
-            n += 1
+        DeltaU[i] /= RandIter
+        expterm[i] /= RandIter
+        pb.Update(i)
         
-    # TODO: block average
-    measure.Normalize = False
-    histB = measure.makeHist(exptermB) ; histW = measure.makeHist(exptermW)
-    muB = -beta * np.log( np.sum(histB[1]) / np.sum(histB[0]) )
-    muW = -beta * np.log( np.sum(histW[1]) / np.sum(histW[0]) )
-    
-    ret = (histB, histW, muB, muW)
-    pickle.dump(ret, open(WidomPickle, 'w'))
-    
-    
+    DeltaU_avg = np.mean(DeltaU[-LastNFrames:]) ; expterm_avg = np.mean(expterm[-LastNFrames:])
+    DeltaU_err = np.std(DeltaU[-LastNFrames:], ddof = 1) ; expterm_err = np.std(expterm[-LastNFrames:], ddof = 1)
+    ret = (expterm_avg, expterm_err, expterm), (DeltaU_avg, DeltaU_err, DeltaU)  #dumping per frame quantities as well to compare with gromacs
+    pickle.dump(ret, open(TPIPickle, 'w'))
 
 
 ### MAIN ###
@@ -336,8 +344,10 @@ if __name__ == '__main__':
     AtomNames2Types = False 
     if len(sys.argv) > 6: AtomNames2Types = bool(sys.argv[6])
     if len(sys.argv) > 7:
-        ff_file = os.path.abspath(sys.argv)
-        ff = file(ff_file).read()
+        fftype = sys.argv[7]
+        if not fftype == 'AA':
+            ff_file = os.path.abspath('/home/cask0/home/tsanyal/benwat/data/cgff/NB250NW250/control/NB250NW250_%s_ff.dat' % fftype)
+            ff = file(ff_file).read()
 
     measure.AtomNames2Types = AtomNames2Types
     measure.StepFreq = 10
@@ -362,12 +372,10 @@ if __name__ == '__main__':
     for method in ['UnCorrected', 'TailCorrected', 'GeomCorrectedExact', 'GeomCorrectedExtrapolated']:
         make_RKBI(LammpsTraj, '%s_RKBI_%s' % (FilePrefix, method), NB, NW, method = method)
     
-    if not LammpsTraj.__contains__('SP') or NB == 10:
+    if not LammpsTraj.__contains__('SP') or [10, 19, 38, 57].__contains__(NB):
         measure.NBlocks = 4
         measure.StepFreq = 50
         make_SKBI(LammpsTraj, FilePrefix+'_SKBI', NB, NW)
-
-    
     
     ### Deprecated calculations (don't yield meaningful results)
     #make_clust(LammpsTraj, FilePrefix + '_clust_W', 7.5, 'B')

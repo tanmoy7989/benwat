@@ -402,7 +402,7 @@ def makeParamDict(BoxL, Prefix = 'benwat'):
     d = {'minsteps': MINSTEPS, 'nptsteps': NPTSTEPS, 'equilsteps': EQUILSTEPS, 'prodsteps': PRODSTEPS, 
          'calcsteps': NEIGHCALCSTEPS,'stepfreq': STEPFREQ, 'restart_time_mins': RESTART_TIME_MINS, 'timestep': TIMESTEP, 
          'Prefix': Prefix, 'Lx': Lx, 'Ly': Ly, 'Lz': Lz, 'Packmol_tol': Packmol_tol,
-         'half_Lx': 0.5*Lx*10-1.0, 'half_Ly': 0.5*Ly*10-1.0, 'half_Lz': 0.5*Lz*10-1.0,
+         'half_Lx': 0.5*Lx*10-1.0, 'half_Ly': 0.5*Ly*10-1.0, 'half_Lz': 0.5*Lz*10-1.0, # convert to A before passing to Packmol
          'TempSet': TempSet, 'PressSet': 1.0, 'NB': NB, 'NW': NW, 'Ncores': Ncores}
 
     return d
@@ -594,7 +594,8 @@ mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Pref
         filenames = ['mdout.mdp', '%(Prefix)s_prod.mdp' % paramdict]
         [os.remove(x) for x in filenames]
                                                                                                
-    
+
+                        
 # test
 if __name__ == '__main__': 
     Prefix = 'gro_test'
