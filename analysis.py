@@ -560,6 +560,7 @@ def make_HardSphereMu_1(Traj, Prefix, NB, NW, N = 20):
     mu = np.array(mu)
     
     ret = (RcavList, mu)
+    print ret
     pickle.dump(ret, open(HSPickle, 'w'))
     return ret, HSPickle
 
@@ -590,17 +591,19 @@ def make_HardSphereMu(Traj, Prefix, NB, NW, Algorithm = 'Random', RanIter = None
     if Algorithm == 'Random':
         if RanIter is None: RanIter = 10000
         NIns = RanIter * NFrames
+        print 'Inserting randomly'
     if Algorithm == 'GridSearch':
         if NBins is None: NBins = 20
         NIns = (NBins**3) * NFrames
         dx = BoxL[0] / float(NBins)
         dy = BoxL[1] / float(NBins)
         dz = BoxL[2] / float(NBins)
-        x = np.array([BoxLo[0] + (i+0.5)*dx for i in range(NBins)])
-        y = np.array([BoxLo[1] + (i+0.5)*dy for i in range(NBins)])
-        z = np.array([BoxLo[2] + (i+0.5)*dz for i in range(NBins)])
+        x = np.array([0.0 + (i+0.5)*dx for i in range(NBins)])
+        y = np.array([0.0 + (i+0.5)*dy for i in range(NBins)])
+        z = np.array([0.0 + (i+0.5)*dz for i in range(NBins)])
         X, Y, Z = np.meshgrid(x,y,z)
         Grid = np.array(zip(X.ravel(), Y.ravel(), Z.ravel()))
+        print 'Using %d X %d X %d grid, dx = %g, dy = %g, dz = %g' % (NBins, NBins, NBins, dx, dy, dz)
         
     # calculate insertion coordinates
     def genInsPos():
@@ -611,7 +614,13 @@ def make_HardSphereMu(Traj, Prefix, NB, NW, Algorithm = 'Random', RanIter = None
             return np.array(zip(x,y,z))
         if Algorithm == 'GridSearch':
             return Grid
-               
+    
+    # bin atoms on a grid (assumes algorithm is GridSearch)
+    def gridAtoms(pos):
+        idx, idy, idz = benwatlib.binongrid(pos = Pos, boxl = BoxL, xcenters = x, ycenters = x, zcenters = z)
+        ind = ( (idx*NBins+idy)*NBins + idz) # row major ordering in 3D
+        return Grid[ind]
+        
     # declare all arrays
     if Rcavlist is None:
         Rcavlist = np.array([0, 0.5, 1., 1.5, 2, 2.5, 3, 3.5])
@@ -625,8 +634,9 @@ def make_HardSphereMu(Traj, Prefix, NB, NW, Algorithm = 'Random', RanIter = None
         # frame iteration
         pb = sim.utility.ProgressBar(Text = 'Trying insertions...', Steps = NFrames)
         for n, frame in enumerate(FrameRange):
-            Pos = Trj[frame]
             InsPos = genInsPos()
+            Pos = Trj[frame]
+            if Algorithm == 'GridSearch': Pos = gridAtoms(Pos)
             Ncav += benwatlib.gridinsert(pos = Pos, boxl = BoxL, inspos = InsPos, 
                                          atomtypes = AtomTypes, atomtype_b = 1, 
                                          atomtype_w = 2, rcav = Rcav)
