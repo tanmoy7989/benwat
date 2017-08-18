@@ -109,10 +109,10 @@ def makeSys():
                        				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
     
     # only BB spline and BB local density if dry benzene
-    if not NW: SP_WW = SP_BW = LD_WW = LD_BW = LD_WB = None
+    if NW == 0: SP_WW = SP_BW = LD_WW = LD_BW = LD_WB = None
 
     # only WW spline and WW local density if pure water
-    if not NB: SP_BB = SP_BW = LD_BB = LD_BW = LD_WB = None
+    if NB == 0: SP_BB = SP_BW = LD_BB = LD_BW = LD_WB = None
 
     for P in [SP_BB, SP_WW, SP_BW, LD_BB, LD_WW, LD_BW, LD_WB]:
         if not P is None: Sys.ForceField.extend([P])

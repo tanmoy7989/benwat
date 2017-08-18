@@ -44,33 +44,82 @@ SUBROUTINE SKBI(Pos, BoxL, NAtom, AtomTypes, AtomType_B, AtomType_W, L0, RandIte
     G_WW = SVol * ( (muWW - muW*muW)/(muW*muW) - 1.d0/muW )
     G_BW = SVol * ( (muBW - muB*muW)/(muB*muW) )
 END SUBROUTINE
-            
 
-SUBROUTINE SLICEDENSITY(Pos, BoxL, NAtom, AtomTypes, AtomType_B, AtomType_W, rhoB, rhoW, NSlice)
+
+SUBROUTINE ZDENSITY(Pos, BoxL, NAtom, rho, NBins)
     IMPLICIT NONE
-    INTEGER, INTENT(IN) :: NAtom, NSlice, AtomType_B, AtomType_W
-    INTEGER, INTENT(IN), DIMENSION(0:NAtom-1) :: AtomTypes
+    INTEGER, INTENT(IN) :: NAtom, NBins
     REAL(8), INTENT(IN), DIMENSION(0:NAtom-1, 0:2) :: Pos
     REAL(8), INTENT(IN), DIMENSION(0:2) :: BoxL
-    REAL(8), INTENT(OUT), DIMENSION(0:NSlice-1) :: rhoB, rhoW
+    REAL(8), INTENT(OUT), DIMENSION(0:NBins-1) :: rho
     
     INTEGER :: i, iter
-    REAL(8) :: zi, z0, dz
+    REAL(8) :: di, z0, dz
     REAL(8), DIMENSION(0:2) :: invBoxL
     
-    dz = (BoxL(2) - 0.d0) / NSlice
+    dz = (BoxL(2) - 0.d0) / NBins
     invBoxL = MERGE(1.d0/BoxL, 0.d0, BoxL > 0.d0)
-    
-    DO iter = 0, NSlice-1
-        z0 = 0.5 * (0.d0 + dz*iter)
+    DO iter = 0, NBins-1
+        z0 = 0.d0 + dz * (iter + 0.5)
         DO i = 0, NAtom-1
-            zi = Pos(i,2) - z0
-            zi = zi - BoxL(2) * DNINT(invBoxL(2) * zi) ! reimage along Z axis
-            IF ( ABS(zi-z0) <= 0.5 * dz) THEN
-                IF (AtomTypes(i) == AtomType_B) rhoB(iter) = rhoB(iter) + 1
-                IF (AtomTypes(i) == AtomType_W) rhoW(iter) = rhoW(iter) + 1
-            END IF
+            di = Pos(i,2) - z0
+            di = di - BoxL(2) * DNINT(invBoxL(2) * di) ! reimage along Z axis
+            IF ( ABS(di) <= 0.5 * dz) rho(iter) = rho(iter) + 1
         END DO
     END DO            
 END SUBROUTINE
+
+
+SUBROUTINE GRIDINSERT(Pos, BoxL, NAtom, InsPos, NIns, &
+AtomTypes, AtomType_B, AtomType_W, Rcav, Ncav)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: NAtom, NIns, AtomType_B, AtomType_W
+    REAL(8), INTENT(IN) :: Rcav
+    INTEGER, INTENT(IN), DIMENSION(0:NAtom-1) :: AtomTypes
+    REAL(8), INTENT(IN), DIMENSION(0:2) :: BoxL
+    REAL(8), INTENT(IN), DIMENSION(0:NAtom-1, 0:2) :: Pos
+    REAL(8), INTENT(IN), DIMENSION(0:NIns-1, 0:2) :: InsPos
+    INTEGER, INTENT(OUT) :: Ncav
     
+    INTEGER :: i, j
+    LOGICAL :: isCav, hasB, hasW
+    REAL(8) :: rB, rW, rsq, r1sq, r2sq
+    REAL(8), DIMENSION(0:2) :: invBoxL, Posi, Posj, rij
+    
+    !VDW Radii (Bondii et. al.)
+    rB = 1.77 ; rW = 1.52 ! HS radii of O2 (i.e. SPC/E water)
+    r1sq = (rB + Rcav) * (rB + Rcav)
+    r2sq = (rW + Rcav) * (rW + Rcav)
+    invBoxL = MERGE(1.d0/BoxL, 0.d0, BoxL > 0.d0)
+    Ncav = 0.d0
+    
+    DO i = 0, NIns - 1
+        isCav = .TRUE.
+        Posi = InsPos(i,:)
+        DO j = 0, NAtom - 1
+            ! obtain cavity location from supplied grid
+            Posj = Pos(j,:)
+            rij = Posi - Posj
+            rij = rij - BoxL * ANINT(rij * invBoxL) ! minimage
+            rsq = SUM(rij * rij)
+            hasB = ( (AtomTypes(j) == AtomType_B) .AND. (rsq < r1sq) )
+            hasW = ( (AtomTypes(j) == AtomType_W) .AND. (rsq < r2sq) )
+            IF (hasB .OR. hasW) THEN
+                isCav = .FALSE.
+                EXIT
+            END IF
+        END DO
+        
+        IF (isCav) Ncav = Ncav + 1
+    END DO
+END SUBROUTINE    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+   

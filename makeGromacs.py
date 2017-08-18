@@ -476,6 +476,7 @@ def doNPT(paramdict = None):
     cmdstring = '''
 grompp''' + s_ndx +  '''-f %(Prefix)s_npt.mdp -c %(Prefix)s_minim1.gro -p %(Prefix)s.top -o %(Prefix)s_npt.tpr -maxwarn 100
 mdrun -nt %(Ncores)d -npme -1 -dlb yes -cpt %(restart_time_mins)g -deffnm %(Prefix)s_npt
+
 ''' % paramdict
     
     os.system(cmdstring)
