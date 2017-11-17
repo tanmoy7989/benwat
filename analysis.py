@@ -352,15 +352,21 @@ def make_SurfTens(Traj, Prefix, FF_File, NB = 380, NW = 1000, DelTempFiles = Tru
     
     s = '''
 #set up integration and thermostat
-fix             timeintegration all nve
 fix             thermostat all langevin  3.0000e+02  3.0000e+02  1.0000e+02 18684
 
-# dispay and dump pressure tensor
-thermo_style    custom step c_thermo_press[1] c_thermo_press[2] c_thermo_press[3]
-fix             record all ave/time %(WRITEFREQ)d 1 %(WRITEFREQ)d c_thermo_press[1] c_thermo_press[2] c_thermo_press[3] file %(PREFIX)s_press.dat
+# dispay and dump pressure tensor (contribution from virial only)
+compute ptensor all pressure NULL virial
+
+thermo_style    custom step c_ptensor[1] c_ptensor[2] c_ptensor[3]
+fix             record all ave/time %(WRITEFREQ)d 1 %(WRITEFREQ)d c_ptensor[1] c_ptensor[2] c_ptensor[3] file %(PREFIX)s_press.dat
 
 #run production
 rerun           %(TRAJ)s dump x y z
+
+# clear
+unfix record
+uncompute ptensor
+unfix thermostat
     '''
     
     # make dict for filling in template
@@ -399,9 +405,9 @@ rerun           %(TRAJ)s dump x y z
     # compute surface tension in mN/m
     factor = 0.01 # convert from atm-A to mN/m
     data = np.loadtxt(PressFile)
-    pxx = data[:,1] ; pyy = data[:,2] ; pzz = data[:,3]
-    gamma_frame = Lz * (pzz - 0.5*(pxx + pyy) )
-    gamma_frame *= factor
+    pxx = data[:,1]
+    pyy = data[:,2]
+    pzz = data[:,3]
     
     # block average
     gamma_block = np.zeros(NBlocks)
@@ -409,8 +415,12 @@ rerun           %(TRAJ)s dump x y z
     for b in range(NBlocks):
         start = b * BlockSize
         stop = (b+1) * BlockSize
-        if b == NBlocks - 1: stop = len(Trj)-1
-        gamma_block[b] = np.mean(gamma_frame[start:stop])
+        if b == (NBlocks - 1): stop = len(Trj)-1
+        PXX = np.mean(pxx[start:stop])
+        PYY = np.mean(pyy[start:stop])
+        PZZ = np.mean(pzz[start:stop])
+        gamma_block[b] = (Lz/2.) * (PZZ - (PXX + PYY)/2. )
+        gamma_block[b] *= factor
     
     gamma = np.mean(gamma_block)
     err = 0.0
@@ -535,7 +545,7 @@ def make_EVM(Traj, Prefix, NB, NW, N = 20, Rcav = None, storeMap = False):
     else:
         return ret
 
-def make_HardSphereMu_1(Traj, Prefix, NB, NW, N = 20):
+def make_HardSphereMu_EVM(Traj, Prefix, NB, NW, N = 20):
     ''' computes Hard sphere mu vs cavity size
     for a range of cavity sizes
     '''
@@ -608,19 +618,13 @@ def make_HardSphereMu(Traj, Prefix, NB, NW, Algorithm = 'Random', RanIter = None
     # calculate insertion coordinates
     def genInsPos():
         if Algorithm == 'Random':
-            x = np.random.uniform(BoxLo[0], BoxHi[0], RanIter)
-            y = np.random.uniform(BoxLo[1], BoxHi[1], RanIter)
-            z = np.random.uniform(BoxLo[2], BoxHi[2], RanIter)
+            x = np.random.uniform(0.0, BoxL[0], RanIter)
+            y = np.random.uniform(0.0, BoxL[1], RanIter)
+            z = np.random.uniform(0.0, BoxL[2], RanIter)
             return np.array(zip(x,y,z))
         if Algorithm == 'GridSearch':
             return Grid
     
-    # bin atoms on a grid (assumes algorithm is GridSearch)
-    def gridAtoms(pos):
-        idx, idy, idz = benwatlib.binongrid(pos = Pos, boxl = BoxL, xcenters = x, ycenters = x, zcenters = z)
-        ind = ( (idx*NBins+idy)*NBins + idz) # row major ordering in 3D
-        return Grid[ind]
-        
     # declare all arrays
     if Rcavlist is None:
         Rcavlist = np.array([0, 0.5, 1., 1.5, 2, 2.5, 3, 3.5])
@@ -636,10 +640,7 @@ def make_HardSphereMu(Traj, Prefix, NB, NW, Algorithm = 'Random', RanIter = None
         for n, frame in enumerate(FrameRange):
             InsPos = genInsPos()
             Pos = Trj[frame]
-            if Algorithm == 'GridSearch': Pos = gridAtoms(Pos)
-            Ncav += benwatlib.gridinsert(pos = Pos, boxl = BoxL, inspos = InsPos, 
-                                         atomtypes = AtomTypes, atomtype_b = 1, 
-                                         atomtype_w = 2, rcav = Rcav)
+            Ncav += benwatlib.gridinsert(pos = Pos, boxl = BoxL, inspos = InsPos, rcav = Rcav)
             pb.Update(n)
         # calculate insertion probability
         pcav = float(Ncav) / float(NIns)
@@ -706,7 +707,8 @@ if __name__ == '__main__':
     #for method in RKBI_Methods:
     #    make_RKBI(LammpsTraj, '%s_RKBI_%s' % (FilePrefix, method), NB, NW, method = method)
     
-    make_HardSphereMu(LammpsTraj, FilePrefix + '_HS', NB, NW, N = 30)
+    make_HardSphereMu(LammpsTraj, FilePrefix + '_HS', NB, NW, NBins = 40, Algorithm = 'GridSearch',
+                      Rcavlist = np.array([0, 0.5, 1., 1.5, 2., 2.5, 3., 3.5, 4., 4.5, 5.]))
     
     
     ### Deprecated calculations (don't yield meaningful results)

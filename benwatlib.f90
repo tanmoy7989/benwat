@@ -70,68 +70,21 @@ SUBROUTINE ZDENSITY(Pos, BoxL, NAtom, rho, NBins)
 END SUBROUTINE
 
 
-SUBROUTINE BINONGRID(Pos, BoxL, xcenters, ycenters, zcenters, NAtom, NBins, &
-idx, idy, idz)
+SUBROUTINE GRIDINSERT(Pos, BoxL, NAtom, InsPos, NIns, Rcav, Ncav)
     IMPLICIT NONE
-    INTEGER, INTENT(IN) :: NAtom, NBins
-    REAL(8), INTENT(IN), DIMENSION(0:2) :: BoxL
-    REAL(8), INTENT(IN), DIMENSION(0:NAtom-1, 0:2) :: Pos
-    REAL(8), INTENT(IN), DIMENSION(0:NBins-1) :: xcenters, ycenters, zcenters
-    INTEGER, INTENT(OUT), DIMENSION(0:NAtom-1) :: idx, idy ,idz
-    
-    INTEGER :: i, bin
-    REAL(8) :: dist_x, dist_y, dist_z, x0, y0, z0, dx, dy, dz
-    REAL(8), DIMENSION(0:2) :: Posi, invBoxL
-    
-    dx = xcenters(1) - xcenters(0)
-    dy = ycenters(1) - ycenters(0)
-    dz = zcenters(1) - zcenters(0)
-    idx = 0.d0
-    idy = 0.d0
-    idz = 0.d0
-    invBoxL = MERGE(1.d0/BoxL, 0.d0, BoxL > 0.d0)
-    
-    DO i = 0, NAtom-1
-        Posi = Pos(i,:)
-        DO bin = 0, NBins - 1
-            x0 = 0.d0 + (bin + 0.5) * dz
-            y0 = 0.d0 + (bin + 0.5) * dy
-            z0 = 0.d0 + (bin + 0.5) * dz
-            dist_x = Posi(0) - x0
-            dist_y = Posi(1) - y0
-            dist_z = Posi(1) - z0
-            dist_x = dist_x - BoxL(0) * DNINT(invBoxL(0) * dist_x)
-            dist_y = dist_y - BoxL(1) * DNINT(invBoxL(1) * dist_y)
-            dist_z = dist_z - BoxL(2) * DNINT(invBoxL(2) * dist_z)
-            
-            IF ( ABS(dist_x) <= 0.5 * dx) idx(i) = bin
-            IF ( ABS(dist_y) <= 0.5 * dy) idy(i) = bin
-            IF ( ABS(dist_z) <= 0.5 * dz) idz(i) = bin
-        END DO 
-    ENDDO
-END SUBROUTINE
-        
-
-SUBROUTINE GRIDINSERT(Pos, BoxL, NAtom, InsPos, NIns, &
-AtomTypes, AtomType_B, AtomType_W, Rcav, Ncav)
-    IMPLICIT NONE
-    INTEGER, INTENT(IN) :: NAtom, NIns, AtomType_B, AtomType_W
+    INTEGER, INTENT(IN) :: NAtom, NIns
     REAL(8), INTENT(IN) :: Rcav
-    INTEGER, INTENT(IN), DIMENSION(0:NAtom-1) :: AtomTypes
     REAL(8), INTENT(IN), DIMENSION(0:2) :: BoxL
     REAL(8), INTENT(IN), DIMENSION(0:NAtom-1, 0:2) :: Pos
     REAL(8), INTENT(IN), DIMENSION(0:NIns-1, 0:2) :: InsPos
     INTEGER, INTENT(OUT) :: Ncav
     
     INTEGER :: i, j
-    LOGICAL :: isCav, hasB, hasW
-    REAL(8) :: rB, rW, rsq, r1sq, r2sq, Rcavsq
+    LOGICAL :: isCav
+    REAL(8) :: rsq,  Rcavsq
     REAL(8), DIMENSION(0:2) :: invBoxL, Posi, Posj, rij
     
     !VDW Radii (Bondii et. al.)
-    rB = 1.77 ; rW = 1.52 ! HS radii of O2 (i.e. SPC/E water)
-    r1sq = (rB + Rcav) * (rB + Rcav)
-    r2sq = (rW + Rcav) * (rW + Rcav)
     Rcavsq = Rcav * Rcav
     invBoxL = MERGE(1.d0/BoxL, 0.d0, BoxL > 0.d0)
     Ncav = 0.d0
@@ -145,8 +98,6 @@ AtomTypes, AtomType_B, AtomType_W, Rcav, Ncav)
             rij = Posi - Posj
             rij = rij - BoxL * ANINT(rij * invBoxL) ! minimage
             rsq = SUM(rij * rij)
-            !hasB = ( (AtomTypes(j) == AtomType_B) .AND. (rsq < r1sq) )
-            !hasW = ( (AtomTypes(j) == AtomType_W) .AND. (rsq < r2sq) )
             IF (rsq < Rcavsq) THEN
                 isCav = .FALSE.
                 EXIT

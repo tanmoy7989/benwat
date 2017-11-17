@@ -26,7 +26,7 @@ LDCutBB = None
 LDCutBW = None
 LDCutWB = None
 RhoMin = 0
-RhoMax = 20
+RhoMax = RhoMax_BB = RhoMax_WW = RhoMax_BW = RhoMax_WB = 20
 LD_Delta = 1.0
 NLDKnots = 30
 NLDWWKnots = 50
@@ -44,6 +44,8 @@ OptStages = None
 OptStageNames = None
 LammpsTraj = None
 LangevinGamma = 0.01
+StartWithHessian = False
+NoHessianMaxIter = 100
 
 # Extended Ensemble approach settings
 doMultiSrel = False
@@ -59,6 +61,7 @@ sim.srel.base.DiffEneFracTol = 0.1 #increase tolerance to prevent sim-Lammps mis
 def makeSys():
     global NB, NW, BoxL
     global LDCutBB, LDCutBW, LDCutWB, LDCutWW
+    global RhoMax_BB, RhoMax_WW, RhoMax_BW, RhoMax_WB
     global LammpsTraj, Prefix
 
     # read trajectory
@@ -100,13 +103,13 @@ def makeSys():
     
     n = NLDKnots if not useMoreLDWWKnots else NLDWWKnots
     if not LDCutWW is None: LD_WW = LD(Sys, Cut = LDCutWW, LowerCut = LDCutWW - LD_Delta, NKnot = n,
-                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WW", Filter = FilterWW_ordered)
+                       				   RhoMin = RhoMin, RhoMax = RhoMax_WW, Label = "LD_WW", Filter = FilterWW_ordered)
     if not LDCutBB is None: LD_BB = LD(Sys, Cut = LDCutBB, LowerCut = LDCutBB - LD_Delta, NKnot = NLDKnots,
-                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BB", Filter = FilterBB_ordered)
+                       				   RhoMin = RhoMin, RhoMax = RhoMax_BB, Label = "LD_BB", Filter = FilterBB_ordered)
     if not LDCutBW is None: LD_BW = LD(Sys, Cut = LDCutBW, LowerCut = LDCutBW - LD_Delta, NKnot = NLDKnots,
-                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_BW", Filter = FilterBW_ordered)
+                       				   RhoMin = RhoMin, RhoMax = RhoMax_BW, Label = "LD_BW", Filter = FilterBW_ordered)
     if not LDCutWB is None: LD_WB = LD(Sys, Cut = LDCutWB, LowerCut = LDCutWB - LD_Delta, NKnot = NLDKnots,
-                       				   RhoMin = RhoMin, RhoMax = RhoMax, Label = "LD_WB", Filter = FilterWB_ordered)
+                       				   RhoMin = RhoMin, RhoMax = RhoMax_WB, Label = "LD_WB", Filter = FilterWB_ordered)
     
     # only BB spline and BB local density if dry benzene
     if NW == 0: SP_WW = SP_BW = LD_WW = LD_BW = LD_WB = None
@@ -142,6 +145,9 @@ def makeSys():
         if SP_BW:
             SP_BW.KnotMinHistFrac = 0.01
                     
+    
+    for P in [LD_BB, LD_WW, LD_BW, LD_WB]:
+        print P.Name, P.RhoMin, P.RhoMax, P.Cut, len(P.Knots)
     return Sys
 
 
@@ -178,7 +184,7 @@ def runSrel(Sys, ParamString = None):
     global LDCutBB, LDCutBW, LDCutWB, LDCutWW, BoxL
     global LammpsTraj, Prefix
     global MinSteps, EquilSteps, ProdSteps, StepFreq
-    global OptStages, OptStageNames
+    global OptStages, OptStageNames, StartWithHessian, NoHessianMaxIter
 
     Sys = makeSys()
     Map = sim.atommap.PosMap() # note all AA trajectories are in COM format
@@ -254,9 +260,21 @@ def runSrel(Sys, ParamString = None):
      
         print Sys.ForceField.ParamString()
         
-        Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
-
-
+        # Hessian on or off (only for SPLD cases)
+        if StartWithHessian:
+            # check if Hessian is requested from start
+            print "Using Hessian descent from the start"
+            Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
+        elif not StartWithHessian:
+            # turn off hessian for requested number of steps
+            print "Turning off Hessian descent for first %d steps" % NoHessianMaxIter
+            Opt.UseHessian = False
+            Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq,
+                                     MaxIter = NoHessianMaxIter)
+            print "Turning on Hessian descent"
+            Opt.UseHessian = True
+            Opt.RunConjugateGradient(StepsEquil = EquilSteps, StepsProd = ProdSteps, StepsStride = StepFreq)
+        
 
 def runMD(Sys, ParamString, MDPrefix = None, BoxL = None, useParallel = False, NCores = 1, autoSubmit = True):
     global LammpsTraj, Prefix, TempSet
