@@ -23,6 +23,99 @@ def make_rdf(Traj, Prefix, AtomPair):
     NeighAtomType = AtomDict[j]
     return measure.makeRDF(CentAtomType, NeighAtomType, Prefix = Prefix)
 
+def make_SphereVolPoints(radius, NPoints):
+    Pos = np.zeros([NPoints, 3], float)
+    for i in range(NPoints):
+        X = np.random.normal(size = 3)
+        Pos[i] = radius * (np.random.random())**(1./3) * (X/np.linalg.norm(X))
+    return Pos
+
+def make_smeared_rdf(Traj, Prefix, AtomPair, NPoints = 10, Normalize = True, NWorkers = 2):
+    rdfpickle = Prefix + '.pickle'
+    if os.path.isfile(rdfpickle):
+        return pickle.load(open(rdfpickle, 'r')), rdfpickle
+
+    # parameters
+    StepFreq = 20
+    NBlocks = 1
+    NBins = 100
+
+    # parse Traj
+    Trj = pickleTraj(Traj)
+    BoxL = Trj.FrameData['BoxL']
+    FrameRange = range(0, len(Trj), StepFreq)
+    NFrames = len(FrameRange)
+    AtomTypes = Trj.AtomTypes
+    i = AtomPair[0]
+    j = AtomPair[1]
+    CentAtomType = AtomDict[i]
+    NeighAtomType = AtomDict[j]
+    NCentAtoms = len(np.where(AtomTypes == CentAtomType)[0])
+    NNeighAtoms = len(np.where(AtomTypes == NeighAtomType)[0])
+
+    # initialize arrays
+    bin_vals_block = np.zeros((NBins, NBlocks))
+    r = np.zeros(NBins)
+    nr = np.zeros((NFrames, NBins))
+    
+    # initialize binning
+    bin_centers = np.zeros(NBins)
+    bin_vals = np.zeros(NBins)
+    bin_errs = np.zeros(NBins)
+    rmax = 0.5 * BoxL[0]
+    rmin = 0.0
+    delta = (rmax - rmin) / float(NBins)
+    for i in range(NBins):
+        r[i] = rmin + (i+0.5)*delta
+    
+    # precompute uniformly sampled spherical volume
+    Srad_B = 3.7
+    Srad_W = 1.5 
+    Srad_cent = Srad_B if CentAtomType == 1 else Srad_W
+    Srad_neigh = Srad_B if NeighAtomType == 1 else Srad_W
+    SpherePos_cent = make_SphereVolPoints(Srad_cent, NPoints = NPoints)
+    SpherePos_neigh = make_SphereVolPoints(Srad_neigh, NPoints = NPoints)
+
+    # start frame loop
+    pb = sim.utility.ProgressBar(Text = '', Steps = NFrames)
+    for i, frame in enumerate(FrameRange):
+        Pos = Trj[frame]
+        nr[i, :] = benwatlib.smeared_rdf_frame(bin_centers = r, bin_delta = delta,
+                                               pos = Pos, atomtypes = AtomTypes, boxl = BoxL,
+                                               spherepos_cent = SpherePos_cent,
+                                               spherepos_neigh = SpherePos_neigh,
+                                               centatomtype = CentAtomType, 
+                                               neighatomtype = NeighAtomType,
+                                               nworkers = NWorkers)
+        pb.Update(i)
+
+    # start block averaging
+    BlockSize = int(NFrames / NBlocks)
+    for b in range(NBlocks):
+        block_start = b * BlockSize
+        block_stop = (b+1) * BlockSize if b < NBlocks - 1 else NFrames
+        bin_vals_block[:, b]  = np.mean(nr[block_start : block_stop, :], axis = 0)
+        
+        if Normalize:
+            bin_vals_block[:,b] *= BoxL[0] ** 3.
+            for i in range(NBins):
+                this_r = r[i] - 0.5 * delta
+                next_r = r[i] + 0.5 * delta
+                bin_vals_block[i,b] /= ( (4.*np.pi/3.) * (next_r**3. - this_r**3.) )
+                if CentAtomType == NeighAtomType:
+                    Norm = 0.5 * NCentAtoms * (NCentAtoms - 1)
+                else:
+                    Norm = NCentAtoms * NNeighAtoms
+                bin_vals_block[:,b] /= Norm                                                                     
+                                                                                                        
+    # prepare output
+    bin_centers = r
+    bin_vals = np.mean(bin_vals_block, axis = 1)
+    if NBlocks > 1: bin_errs = np.std(bin_vals_block, axis = 1, dtype = np.float64, ddof = 1)
+    ret = (bin_centers, bin_vals, bin_errs)
+    with open(rdfpickle, 'w') as of: pickle.dump(ret, of)
+    return ret, rdfpickle
+
 
 
 ##### LOCAL DENSITY DISTRIBUTION #####
@@ -36,6 +129,99 @@ def make_ld(Traj, Prefix, AtomPair, LDCut, **kwargs):
     NeighAtomType = AtomDict[j]
     return measure.makeLDHist(CentAtomType, NeighAtomType, Prefix = Prefix, LDCut = LDCut, LDDelta = LDDelta)
 
+
+def parseHistString(s, start = 3):
+    lines = s.split('\n')
+    lines = lines[start:]
+    x = []
+    y = []
+    for i, l in enumerate(lines):
+        if not l: continue
+        this_l = l.split()
+        x_ = float(this_l[0].strip())
+        y_ = float(this_l[1].strip())
+        x.append(x_)
+        y.append(y_)
+    x = np.array(x)
+    y = np.array(y)
+    return x, y
+        
+
+def make_ld_sim(Traj, Prefix, NB, NW, LDCuts = None, **kwargs):
+    print 'All LD distributions using the sim package'
+    if LDCuts is None:
+        LDCuts = {'BB': 7.5,
+                  'WW': 3.5,
+                  'BW': 0.5 * (7.5 + 3.5),
+                  'WB': 0.5 * (7.5 + 3.5)}         
+    # get kwargs
+    NBins = kwargs.get('NBins', 100)
+    StepFreq = kwargs.get('StepFreq', 10)
+    useMoreLDWWKnots = kwargs.get('useMoreLDWWKnots', True)
+    
+    # make cg system
+    cg.NB = NB
+    cg.NW = NW
+    cg.Prefix = 'NB%dNW%d' % (NB, NW)
+    cg.TempSet = TempSet
+    cg.LammpsTraj = Traj
+    cg.LDCutBB = LDCuts['BB']
+    cg.LDCutWW = LDCuts['WW']
+    cg.LDCutBW = LDCuts['BW']
+    cg.LDCutWB = LDCuts['WB']
+    cg.RhoMin = 0.0
+    if useMoreLDWWKnots:
+        cg.RhoMax_WW = 6.0
+        cg.NLDWWKnots = 60
+        cg.useMoreLDWWKnots = True
+    cg.ReportNBin = NBins
+    Sys = cg.makeSys()
+    
+    # get trj object
+    Trj = pickleTraj(LammpsTraj)
+    Trj = Trj[0::StepFreq]
+    NFrames = len(Trj)
+    
+    # create storage arrays
+    NBlocks = 4
+    Hists = {}
+    Hists_block = {}
+    for k in ['BB', 'WW', 'BW', 'WB']:
+        Hists[k] = None
+        Hists_block[k] = ( np.zeros([NBins, NBlocks]), np.zeros([NBins, NBlocks]) )
+    
+    # loop over blocks
+    BlockSize = int(NFrames / NBlocks)
+    for b in range(NBlocks):
+        if NBlocks > 1: print 'Block:', b
+        start = b * BlockSize
+        stop = (b+1) * BlockSize if not b == NBlocks-1 else NFrames
+        this_Trj = Trj[start:stop]
+        sim.srel.base.ParseArgTraj(Traj = this_Trj, Sys = Sys, Beta = 1./(kB * TempSet) )
+        for P in Sys.ForceField:
+            if P.Name.__contains__('LD'):
+                k = P.Name.split('LD_')[-1]
+                s = P.HistString()
+                x, y = parseHistString(s)
+                Hists_block[k][0][:, b] = x
+                Hists_block[k][1][:, b] = y
+    
+    # calculate block averages
+    for k in Hists.keys():
+        x = np.mean(Hists_block[k][0], axis = 1)
+        y = np.mean(Hists_block[k][1], axis = 1)
+        err = np.zeros(NBins)
+        if NBlocks > 1:
+            err = np.std(Hists_block[k][1], axis = 1, ddof = 1)
+        Hists[k] = (x, y, err)
+    
+    # write to pickles
+    for k in ['BB', 'WW', 'BW', 'WB']:
+        ldpickle = Prefix + '_ld_%s.pickle' % k
+        with open(ldpickle, 'w') as of:
+            pickle.dump(Hists[k], of)
+    return    
+    
 
 
 ##### CLUSTER SIZE DISTRIBUTION ##### (!! DEPRECATED !!)
@@ -114,11 +300,14 @@ def make_RKBI(Traj, Prefix, NB, NW, RDFPrefix = None, method = 'UnCorrected'):
     G_BB = np.zeros(NBins) ; G_WW = np.zeros(NBins) ; G_BW = np.zeros(NBins)
     err_BB = np.zeros(NBins) ; err_WW = np.zeros(NBins) ; err_BW = np.zeros(NBins)
     
+    # total correlation function
+    h_BB_block = g_BB_block - 1.
+    h_WW_block = g_WW_block - 1.
+    h_BW_block = g_BW_block - 1.
+    
     if method == 'UnCorrected':
         # from definition of KBI for open systems
-        h_BB_block = g_BB_block - 1
-        h_WW_block = g_WW_block - 1
-        h_BW_block = g_BW_block - 1
+        pass
     
     elif method == 'TailCorrected':
         print "Block averaged version not implemented"
@@ -135,8 +324,6 @@ def make_RKBI(Traj, Prefix, NB, NW, RDFPrefix = None, method = 'UnCorrected'):
         h_BW = g_BW * Bulk_W / (Bulk_W - DeltaN_BW) - 1
         
     elif method == 'GeomCorrectedExact':
-        print "Block averaged version not implemented"
-        exit()
         # Krueger, Schenll et. al, J.Phys.Chem.Lett, 2013, 4, 235-238, Eqn (6)
         x_BB = [np.array([0])] + [r_BB[:i] / r_BB[:i][-1] for i in range(1,NBins)]
         x_WW = [np.array([0])] + [r_WW[:i] / r_WW[:i][-1] for i in range(1,NBins)]
@@ -144,24 +331,16 @@ def make_RKBI(Traj, Prefix, NB, NW, RDFPrefix = None, method = 'UnCorrected'):
         w_BB = lambda i: (1 - 1.5 * x_BB[i] + 0.5 * x_BB[i]**3.)
         w_WW = lambda i: (1 - 1.5 * x_WW[i] + 0.5 * x_WW[i]**3.)
         w_BW = lambda i: (1 - 1.5 * x_BW[i] + 0.5 * x_BW[i]**3.)
-        h_BB = g_BB - 1
-        h_WW = g_WW - 1
-        h_BW = g_BW - 1
     
     elif method == 'GeomCorrectedExtrapolated':
-        print "Block averaged version not implemented"
-        exit()
-        # Krueger, Schenll et. al, J.Phys.Chem.Lett, 2013, 4, 235-238, Eqn (7)
+        # Schnell, Englebienne, et al., Chem. Phys. Lett., 2013, 582, 154-157
         x_BB = [np.array([0])] + [r_BB[:i] / r_BB[:i][-1] for i in range(1,NBins)]
         x_WW = [np.array([0])] + [r_WW[:i] / r_WW[:i][-1] for i in range(1,NBins)]
         x_BW = [np.array([0])] + [r_BW[:i] / r_BW[:i][-1] for i in range(1,NBins)]
         w_BB = lambda i: (1 - x_BB[i]**3.)
         w_WW = lambda i: (1 - x_WW[i]**3.)
         w_BW = lambda i: (1 - x_BW[i]**3.)
-        h_BB = g_BB - 1
-        h_WW = g_WW - 1
-        h_BW = g_BW - 1
-    
+        
     # integrate
     for b in range(NBlocks):
         for n in range(1, NBins):
@@ -370,14 +549,14 @@ unfix thermostat
     '''
     
     # make dict for filling in template
-    d = {'PREFIX': Prefix, 'TRAJ': Traj, 'WRITEFREQ': 2500}
+    d = {'PREFIX': Prefix, 'TRAJ': Traj, 'WRITEFREQ': 1000}
     
     # extract details from traj
     measure.LammpsTraj = Traj
     measure.__parseFrameData()
     Trj = measure.Trj
     FrameRange = measure.FrameRange ; NFrames = len(FrameRange)
-    NBlocks = measure.NBlocks
+    NBlocks =measure.NBlocks
     Lz = Trj.FrameData['BoxL'][2]
         
     if not os.path.isfile(PressFile):
@@ -386,6 +565,12 @@ unfix thermostat
         cg.NB = NB ; cg.NW = NW
         cg.LDCutBB = 7.5 ; cg.LDCutWW = 3.5
         cg.LDCutBW = cg.LDCutWB = 0.5 * (7.5 + 3.5)
+        
+        cg.RhoMin = 0.0
+        cg.RhoMax_WW = 6.0
+        cg.NLDWWKnots = 60
+        cg.useMoreLDWWKnots = True
+
         Sys = cg.makeSys()
         Sys.BoxL = Trj.FrameData['BoxL']
     
@@ -626,8 +811,7 @@ def make_HardSphereMu(Traj, Prefix, NB, NW, Algorithm = 'Random', RanIter = None
             return Grid
     
     # declare all arrays
-    if Rcavlist is None:
-        Rcavlist = np.array([0, 0.5, 1., 1.5, 2, 2.5, 3, 3.5])
+    if Rcavlist is None: Rcavlist = np.array([0, 0.5, 1., 1.5, 2, 2.5, 3, 3.5])
     N = len(Rcavlist)
     mu = np.zeros(N)
     
@@ -652,9 +836,6 @@ def make_HardSphereMu(Traj, Prefix, NB, NW, Algorithm = 'Random', RanIter = None
     pickle.dump(ret, open(HSPickle, 'w'))
     return ret, HSPickle
         
-
-
-
 
                 
 ###### MAIN ######
@@ -689,26 +870,34 @@ if __name__ == '__main__':
     LDCut_WB = LDCut_BW
     
     # RKBI methods
-    RKBI_Methods = ['UnCorrected', 'TailCorrected', 'GeomCorrectedExact', 'GeomCorrectedExtrapolated']
-    #RKBI_Methods = ['UnCorrected']
+    #RKBI_Methods = ['UnCorrected', 'TailCorrected', 'GeomCorrectedExact', 'GeomCorrectedExtrapolated']
+    RKBI_Methods = ['GeomCorrectedExact']
+    
+    # LD distribution using sim package
+    #print '\nComputing LD distribution for ', SysPrefix
+    #print '----------------------------------------------'
+    #LDCuts = {'BB': LDCut_BB, 'WW': LDCut_WW, 'BW': LDCut_BW, 'WB': LDCut_WB}
+    #make_ld_sim(LammpsTraj, FilePrefix, NB, NW, LDCuts = LDCuts)
+    #exit()
     
     # small systems
-    print '\nComputing properties for ', SysPrefix
-    print '------------------------------------------'
-    make_rdf(LammpsTraj, FilePrefix + '_rdf_BB', 'BB')
-    make_rdf(LammpsTraj, FilePrefix + '_rdf_WW', 'WW')
-    make_rdf(LammpsTraj, FilePrefix + '_rdf_BW', 'BW')
+    #print '\nComputing properties for ', SysPrefix
+    #print '------------------------------------------'
+    #make_rdf(LammpsTraj, FilePrefix + '_rdf_BB', 'BB')
+    #make_rdf(LammpsTraj, FilePrefix + '_rdf_WW', 'WW')
+    #make_rdf(LammpsTraj, FilePrefix + '_rdf_BW', 'BW')
     
-    make_ld(LammpsTraj, FilePrefix + '_ld_BB', 'BB', LDCut_BB)
-    make_ld(LammpsTraj, FilePrefix + '_ld_WW', 'WW', LDCut_WW)
-    make_ld(LammpsTraj, FilePrefix + '_ld_BW', 'BW', LDCut_BW)
-    make_ld(LammpsTraj, FilePrefix + '_ld_WB', 'WB', LDCut_WB)
+    #make_ld(LammpsTraj, FilePrefix + '_ld_BB', 'BB', LDCut_BB)
+    #make_ld(LammpsTraj, FilePrefix + '_ld_WW', 'WW', LDCut_WW)
+    #make_ld(LammpsTraj, FilePrefix + '_ld_BW', 'BW', LDCut_BW)
+    #make_ld(LammpsTraj, FilePrefix + '_ld_WB', 'WB', LDCut_WB)
     
-    #for method in RKBI_Methods:
-    #    make_RKBI(LammpsTraj, '%s_RKBI_%s' % (FilePrefix, method), NB, NW, method = method)
+    #make_HardSphereMu(LammpsTraj, FilePrefix + '_HS', NB, NW, NBins = 40, Algorithm = 'GridSearch',
+    #                  Rcavlist = np.array([0, 0.5, 1., 1.5, 2., 2.5, 3., 3.5, 4., 4.5, 5.]))
     
-    make_HardSphereMu(LammpsTraj, FilePrefix + '_HS', NB, NW, NBins = 40, Algorithm = 'GridSearch',
-                      Rcavlist = np.array([0, 0.5, 1., 1.5, 2., 2.5, 3., 3.5, 4., 4.5, 5.]))
+    # large system
+    for method in RKBI_Methods:
+        make_RKBI(LammpsTraj, '%s_RKBI_%s' % (FilePrefix, method), NB, NW, method = method, RDFPrefix = FilePrefix)
     
     
     ### Deprecated calculations (don't yield meaningful results)

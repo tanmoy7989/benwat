@@ -215,14 +215,14 @@ comm-mode = Linear
 ns_type = grid
 cutoff-scheme = group
 verlet-buffer-drift  = 0
-rlist = 1
+rlist = %(RVDW)g
 rlistlong = 1.0
 
 ;electrostatics
 coulombtype = PME
 coulomb-modifier = None
 rcoulomb-switch = 0
-rcoulomb = 1.0
+rcoulomb = %(RVDW)g
 epsilon-r = 1
 epsilon-rf = 1
 
@@ -240,7 +240,7 @@ optimize-fft = yes
 vdwtype = Cut-off
 vdw-modifier = None
 rvdw-switch = 0
-rvdw = 1.0
+rvdw = %(RVDW)g
 
 ;constraints
 constraints = all-bonds
@@ -293,10 +293,10 @@ ref-t = %(TempSet)g %(TempSet)g
 ;press-coupling params (Parrinello-Rahman used in Nico's paper)
 nstpcouple = -1
 pcoupl = Parrinello-Rahman
-pcoupltype = isotropic
+pcoupltype = semiisotropic
 tau-p = 3.0 3.0
 ref-p = %(PressSet)g %(PressSet)g
-compressibility = 4.5e-5
+compressibility = 0.0 4.5e-5
 refcoord_scaling = no
 DispCorr = EnerPres
 
@@ -321,10 +321,10 @@ ref-t = %(TempSet)g %(TempSet)g
 ;press-coupling params (Parrinello-Rahman used in Nico's paper)
 nstpcouple = -1
 pcoupl = Parrinello-Rahman
-pcoupltype = isotropic
+pcoupltype = semiisotropic
 tau-p = 3.0 3.0
 ref-p = %(PressSet)g %(PressSet)g
-compressibility = 4.5e-5
+compressibility = 0.0 4.5e-5
 refcoord_scaling = no
 DispCorr = EnerPres
 

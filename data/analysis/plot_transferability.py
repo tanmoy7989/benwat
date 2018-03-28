@@ -102,7 +102,7 @@ def plotpanel_1Dhist(OrderParam):
 		      plot_1Dhist(ax, x_CG_2, y_CG_2, OrderParam, trajtype, NBlist[j], NWlist[j], flagdict)
 		      
     # plot kullback liebler divergence
-    fig2 = plt.figure(facecolor = 'w', edgecolor = 'w')
+    fig2 = plt.figure(facecolor = 'w', edgecolor = 'w', figsize = (5,5))
     ax = fig2.add_subplot(1,1,1)
     for i, trajtype in enumerate(CGTrajTypes):
         i = CGTrajTypes.index(trajtype)
@@ -167,5 +167,5 @@ def plot_KBI():
 #### MAIN
 #xlim = [0, 9]
 #ylim = None
-plotpanel_1Dhist('ld_WB')
+plotpanel_1Dhist('ld_BW')
 plt.show()

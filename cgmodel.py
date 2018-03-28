@@ -16,6 +16,9 @@ Mass_W = 18.01 ; Mass_B = 78.11
 Dia_W = 2.8 ; Dia_B = 5.3
 
 # Pair potential settings
+SPCutBB = None
+SPCutWW = None
+SPCutBW = None
 SPCutScale = 2.5
 NSPKnots = 30
 ManageInnerCore = True # True to capture inner core tails of corresponding histograms
@@ -31,6 +34,9 @@ LD_Delta = 1.0
 NLDKnots = 30
 NLDWWKnots = 50
 useMoreLDWWKnots = False
+
+# Histogram settings
+ReportNBin = 100
 
 # MD settings
 MinSteps = 1000
@@ -60,9 +66,11 @@ sim.srel.base.DiffEneFracTol = 0.1 #increase tolerance to prevent sim-Lammps mis
 
 def makeSys():
     global NB, NW, BoxL
+    global SPCutBB, SPCutWW, SPCutBW
     global LDCutBB, LDCutBW, LDCutWB, LDCutWW
     global RhoMax_BB, RhoMax_WW, RhoMax_BW, RhoMax_WB
     global LammpsTraj, Prefix
+    global ReportNBin
 
     # read trajectory
     if LammpsTraj: Trj = pickleTraj(LammpsTraj)
@@ -79,9 +87,9 @@ def makeSys():
     for i in range(NW): Sys += MolTypeW.New()
 
     # box lengths and cutoffs
-    SPCutWW = SPCutScale * Dia_W
-    SPCutBB = SPCutScale * Dia_B
-    SPCutBW = SPCutScale * 0.5 * (Dia_B + Dia_W)
+    if SPCutWW is None: SPCutWW = SPCutScale * Dia_W
+    if SPCutBB is None: SPCutBB = SPCutScale * Dia_B
+    if SPCutBW is None: SPCutBW = SPCutScale * 0.5 * (Dia_B + Dia_W)
 
     # atom selection filters
     FilterWW = sim.atomselect.PolyFilter([AtomTypeW, AtomTypeW])
@@ -119,7 +127,7 @@ def makeSys():
 
     for P in [SP_BB, SP_WW, SP_BW, LD_BB, LD_WW, LD_BW, LD_WB]:
         if not P is None: Sys.ForceField.extend([P])
-    for P in Sys.ForceField: P.Arg.SetupHist(NBin = 10000, ReportNBin = 100)
+    for P in Sys.ForceField: P.Arg.SetupHist(NBin = 10000, ReportNBin = ReportNBin)
 
     # system setup
     Sys.Load()
@@ -305,10 +313,7 @@ def runMD(Sys, ParamString, MDPrefix = None, BoxL = None, useParallel = False, N
                                            NStepsMin = MinSteps, NStepsEquil = EquilSteps, 
                                            NStepsProd = ProdSteps, WriteFreq = StepFreq,
                                            Verbose = True)
-    if not ret is None:
-        ret = ModTraj, ModTrajFile
-        return ModTraj, ModTrajFile
-
+    return 
   
 def genMultiOpt(Sys, Map):
     global LammpsTrajList, NBList, NWList, Prefix
